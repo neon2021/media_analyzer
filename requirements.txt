@@ -1,0 +1,36 @@
+# 数据库相关
+psycopg2-binary==2.9.9  # PostgreSQL 驱动
+SQLAlchemy==2.0.25     # ORM 支持
+alembic==1.13.1        # 数据库迁移工具
+
+# 配置管理
+PyYAML==6.0.1          # YAML 配置文件支持
+python-dotenv==1.0.0   # 环境变量管理
+
+# 日志和监控
+loguru==0.7.2          # 高级日志功能
+prometheus-client==0.19.0  # 监控指标
+
+# 文件处理
+watchdog==3.0.0        # 文件系统监控
+python-magic==0.4.27   # 文件类型检测
+pillow==10.2.0         # 图像处理
+opencv-python==4.9.0.80  # 图像分析
+
+# 工具库
+tqdm==4.66.1           # 进度条显示
+python-dateutil==2.8.2 # 日期时间处理
+pytz==2024.1           # 时区处理
+requests==2.31.0       # HTTP 请求
+
+# 测试相关
+pytest==8.0.0          # 测试框架
+pytest-cov==4.1.0      # 测试覆盖率
+pytest-mock==3.12.0    # 测试模拟
+pytest-asyncio==0.23.5 # 异步测试支持
+
+# 开发工具
+black==24.1.1          # 代码格式化
+isort==5.13.2          # 导入排序
+flake8==7.0.0          # 代码检查
+mypy==1.8.0            # 类型检查 

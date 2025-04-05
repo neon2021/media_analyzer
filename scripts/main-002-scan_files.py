@@ -6,25 +6,9 @@ from config_manager import get_config
 import argparse
 import logging
 
-def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='媒体文件扫描程序')
-    parser.add_argument('--config', type=str, help='配置文件路径')
-    return parser.parse_args()
-
 if __name__=="__main__":
-    # 解析命令行参数
-    args = parse_args()
-    print(f'args: {args}')
-    
-    # 加载配置
+    # 获取配置（配置管理器会自动按优先级从多个位置加载配置）
     config = get_config()
-    print(f'[DEBUG] Main - initial config: {config}')
-    if args.config:
-        print(f'[DEBUG] Main - loading config from: {args.config}')
-        config.load_config(args.config)
-    print(f'[DEBUG] Main - final config: {config}')
-    print(f'[DEBUG] Main - database.path: {config.get("database.path")}')
     
     # 设置日志
     config.setup_logging()

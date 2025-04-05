@@ -1,3 +1,39 @@
-.vscode/*
-__pycache__/*
-logs/*
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Project specific
+*.db
+*.db-*
+logs/
+*.log
+
+.empty/

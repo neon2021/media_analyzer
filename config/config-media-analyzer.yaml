@@ -1,0 +1,55 @@
+# 数据库配置
+database:
+  type: postgresql
+  path: ~/media_analyzer/sqlite/media_index.db  # 仅用于迁移时的SQLite数据库路径
+  postgres:
+    host: localhost  # 本地环境使用localhost
+    port: 5432
+    database: media_analyzer
+    username: postgres
+    password: postgres
+    pool_size: 5
+    max_overflow: 10
+    pool_timeout: 30
+    pool_recycle: 3600
+
+# 日志配置
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  path: ~/media_analyzer/logs
+  max_size: 10485760  # 10MB
+  backup_count: 5
+  format: '%(asctime)s [%(levelname)s] %(message)s'
+
+# 扫描配置
+scan:
+  max_depth: 10  # 扫描目录的最大深度
+  exclude_dirs:  # 排除的目录
+    - .git
+    - .svn
+    - node_modules
+    - __pycache__
+  include_extensions:  # 包含的文件扩展名
+    - .jpg
+    - .jpeg
+    - .png
+    - .gif
+    - .bmp
+    - .tiff
+    - .mp4
+    - .mov
+    - .avi
+    - .mkv
+
+# 同步配置
+sync:
+  interval: 300
+  timeout: 30
+  retry_count: 3
+  batch_size: 1000
+
+# 系统配置
+system:
+  id: auto
+  temp_dir: /tmp/media_analyzer
+  max_workers: 4 
