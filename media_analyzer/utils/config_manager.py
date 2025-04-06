@@ -269,8 +269,23 @@ def get_database_config() -> Dict[str, Any]:
 
 def get_postgres_dsn() -> str:
     """获取PostgreSQL数据库连接字符串"""
-    db_config = get_database_config()['postgres']
-    return f"postgresql://{db_config['username']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['database']}"
+    db_config = get_database_config()
+    postgres_config = db_config['postgres']
+    
+    # 检查是否在Docker环境中或是否有docker配置
+    is_docker = get_config().get('environment.is_docker', False)
+    docker_config = db_config.get('docker', {}).get('common', {})
+    
+    # 如果在Docker环境中，使用Docker配置
+    host = postgres_config['host']
+    port = postgres_config['port'] 
+    
+    # 如果连接到本地Docker容器，使用映射端口
+    if host == 'localhost' and docker_config and 'port' in docker_config:
+        port = docker_config['port']
+        logger.info(f"使用Docker映射端口连接PostgreSQL: {port}")
+    
+    return f"postgresql://{postgres_config['username']}:{postgres_config['password']}@{host}:{port}/{postgres_config['database']}"
 
 
 def get_logging_config() -> Dict[str, Any]:
