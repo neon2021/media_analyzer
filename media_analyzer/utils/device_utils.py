@@ -92,6 +92,33 @@ def list_all_devices():
         logger.warning(f"未知的操作系统: {system}")
         return []
 
+def list_all_device_ids():
+    """
+    获取所有设备的挂载路径和UUID的映射字典
+    
+    Returns:
+        dict: 挂载路径到UUID的映射 {mount_path: uuid}
+    """
+    devices = list_all_devices()
+    device_ids = {}
+    
+    for device in devices:
+        mount_path = device.get('mount_path')
+        uuid = device.get('uuid')
+        
+        if mount_path and uuid:
+            # 标准化路径，确保路径格式一致
+            mount_path = PathConverter.normalize_path(mount_path)
+            device_ids[mount_path] = uuid
+            logger.info(f"添加设备映射: {mount_path} -> {uuid}")
+    
+    if not device_ids:
+        logger.warning("未找到任何设备")
+    else:
+        logger.info(f"找到 {len(device_ids)} 个设备")
+    
+    return device_ids
+
 def _list_macos_devices():
     """
     列出macOS系统中的所有设备
@@ -179,10 +206,7 @@ def _list_linux_devices():
             # 获取卷标（如果有）
             label = parts[2].strip() if len(parts) >= 3 else os.path.basename(mount_path)
             
-            # 忽略系统目录
-            if mount_path in ['/', '/boot', '/home', '/var', '/tmp']:
-                continue
-                
+            # 不再忽略系统目录
             devices.append({
                 'uuid': uuid,
                 'mount_path': mount_path,
@@ -193,6 +217,45 @@ def _list_linux_devices():
     
     except Exception as e:
         logger.error(f"获取Linux设备列表失败: {e}")
+    
+    # 如果没有找到任何设备或者发生错误，添加一些调试用的默认设备
+    if not devices:
+        logger.info("添加基本系统目录用于测试")
+        # 添加根目录
+        root_dir = "/"
+        root_stat = os.stat(root_dir)
+        root_uuid = f"debug_root_{root_stat.st_dev}_{root_stat.st_ino}"
+        
+        devices.append({
+            'uuid': root_uuid,
+            'mount_path': root_dir,
+            'label': 'Root'
+        })
+        
+        # 添加用户主目录
+        home_dir = os.path.expanduser("~")
+        home_stat = os.stat(home_dir)
+        home_uuid = f"debug_home_{home_stat.st_dev}_{home_stat.st_ino}"
+        
+        devices.append({
+            'uuid': home_uuid,
+            'mount_path': home_dir,
+            'label': 'Home'
+        })
+        
+        # 添加当前工作目录（如果与主目录不同）
+        cwd = os.getcwd()
+        if cwd != home_dir:
+            cwd_stat = os.stat(cwd)
+            cwd_uuid = f"debug_cwd_{cwd_stat.st_dev}_{cwd_stat.st_ino}"
+            
+            devices.append({
+                'uuid': cwd_uuid,
+                'mount_path': cwd,
+                'label': 'Current Directory'
+            })
+        
+        logger.info(f"已添加 {len(devices)} 个调试设备")
     
     return devices
 

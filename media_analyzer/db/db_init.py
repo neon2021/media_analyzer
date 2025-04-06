@@ -86,7 +86,8 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)")
         
-        db.conn.commit()
+        # 自动提交（通过with db.get_cursor()上下文管理器）
+        # 不需要显式调用commit，因为get_cursor上下文管理器会自动处理
 
 if __name__ == "__main__":
     init_db()

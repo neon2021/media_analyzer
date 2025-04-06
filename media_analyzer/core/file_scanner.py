@@ -2,9 +2,11 @@ import os
 import logging
 import time
 import hashlib
+import multiprocessing
 from datetime import datetime
 from media_analyzer.db.db_manager import get_db
 from media_analyzer.utils.path_converter import PathConverter
+from media_analyzer.utils.config_manager import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,42 @@ def save_progress_to_db(device_uuid, total_files, new_files):
             INSERT OR REPLACE INTO scan_progress (device_uuid, total_files, new_files, last_updated)
             VALUES (?, ?, ?, ?)
         """, (device_uuid, total_files, new_files, now()))
+
+def calculate_file_hash(file_path, block_size=8192, max_size=10*1024*1024):
+    """
+    计算文件的哈希值 (仅计算前10MB内容)
     
+    Args:
+        file_path (str): 文件路径
+        block_size (int): 每次读取的块大小
+        max_size (int): 最大处理的文件大小
+        
+    Returns:
+        str: 文件SHA256哈希值的16进制表示
+    """
+    sha256 = hashlib.sha256()
+    size = 0
+    
+    try:
+        with open(file_path, 'rb') as f:
+            while size < max_size:
+                data = f.read(block_size)
+                if not data:
+                    break
+                size += len(data)
+                sha256.update(data)
+        return sha256.hexdigest()
+    except Exception as e:
+        logger.error(f"计算文件哈希时出错: {file_path}, 错误: {e}")
+        return None
+
+# 检查配置文件中的值
+def check_db_config():
+    """检查数据库配置并返回数据库类型，推断为 'sqlite' 或 'postgresql'"""
+    config = get_config()
+    return config.get('database.type', 'sqlite').lower()
+
+# 在文件开始时就确定数据库类型
 def scan_files_on_device(mount_path, device_uuid):
     """
     扫描设备上的所有媒体文件
@@ -80,6 +117,10 @@ def scan_files_on_device(mount_path, device_uuid):
     logger.info(f"开始扫描设备: {mount_path} (UUID: {device_uuid})")
     db = get_db()
     
+    # 获取数据库类型
+    db_type = get_config().get('database.type', 'sqlite').lower()
+    logger.info(f"使用数据库类型: {db_type}")
+    
     # 标准化挂载路径
     mount_path = PathConverter.normalize_path(mount_path)
     
@@ -88,6 +129,7 @@ def scan_files_on_device(mount_path, device_uuid):
     
     # 创建临时表来跟踪已扫描的文件
     with db.get_cursor() as cursor:
+        # 创建临时表
         cursor.execute('''
         CREATE TEMPORARY TABLE IF NOT EXISTS scanned_files (
             path TEXT PRIMARY KEY
@@ -131,19 +173,30 @@ def scan_files_on_device(mount_path, device_uuid):
                     # 计算文件哈希
                     file_hash = calculate_file_hash(file_path)
                     
-                    # 记录到数据库
-                    cursor.execute('''
-                    INSERT INTO files (device_uuid, path, hash, size, modified_time, scanned_time)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(device_uuid, path) DO UPDATE SET
-                        hash=excluded.hash,
-                        size=excluded.size,
-                        modified_time=excluded.modified_time,
-                        scanned_time=excluded.scanned_time
-                    ''', (device_uuid, rel_path, file_hash, file_size, modified_time, datetime.now()))
+                    # 首先检查文件是否已存在
+                    cursor.execute(
+                        "SELECT 1 FROM files WHERE device_uuid = ? AND path = ?", 
+                        (device_uuid, rel_path)
+                    )
+                    exists = cursor.fetchone() is not None
                     
-                    # 检查是否是新文件
-                    if cursor.rowcount > 0:
+                    if exists:
+                        # 更新现有记录
+                        cursor.execute('''
+                        UPDATE files SET 
+                            hash = ?,
+                            size = ?, 
+                            modified_time = ?,
+                            scanned_time = ?
+                        WHERE device_uuid = ? AND path = ?
+                        ''', (file_hash, file_size, modified_time, datetime.now(), device_uuid, rel_path))
+                    else:
+                        # 插入新记录
+                        cursor.execute('''
+                        INSERT INTO files 
+                        (device_uuid, path, hash, size, modified_time, scanned_time)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (device_uuid, rel_path, file_hash, file_size, modified_time, datetime.now()))
                         new_files_count += 1
                     
                     # 更新已扫描文件表
@@ -159,16 +212,29 @@ def scan_files_on_device(mount_path, device_uuid):
                         rate = scanned_count / elapsed if elapsed > 0 else 0
                         logger.info(f"已扫描 {scanned_count} 个文件，发现 {new_files_count} 个新文件，耗时: {elapsed:.2f}秒，速率: {rate:.2f}文件/秒")
                         
-                        # 更新进度记录
-                        cursor.execute('''
-                        INSERT INTO scan_progress (device_uuid, total_files, new_files, last_updated)
-                        VALUES (?, ?, ?, ?)
-                        ON CONFLICT(device_uuid) DO UPDATE SET
-                            total_files=excluded.total_files,
-                            new_files=excluded.new_files,
-                            last_updated=excluded.last_updated
-                        ''', (device_uuid, scanned_count, new_files_count, datetime.now()))
-                        db.conn.commit()
+                        # 检查进度记录是否存在
+                        cursor.execute(
+                            "SELECT 1 FROM scan_progress WHERE device_uuid = ?", 
+                            (device_uuid,)
+                        )
+                        progress_exists = cursor.fetchone() is not None
+                        
+                        if progress_exists:
+                            # 更新现有进度
+                            cursor.execute('''
+                            UPDATE scan_progress SET 
+                                total_files = ?,
+                                new_files = ?,
+                                last_updated = ?
+                            WHERE device_uuid = ?
+                            ''', (scanned_count, new_files_count, datetime.now(), device_uuid))
+                        else:
+                            # 插入新进度
+                            cursor.execute('''
+                            INSERT INTO scan_progress 
+                            (device_uuid, total_files, new_files, last_updated)
+                            VALUES (?, ?, ?, ?)
+                            ''', (device_uuid, scanned_count, new_files_count, datetime.now()))
                         
                         last_progress_update = now
                 
@@ -186,44 +252,30 @@ def scan_files_on_device(mount_path, device_uuid):
         rate = scanned_count / elapsed if elapsed > 0 else 0
         logger.info(f"扫描完成。共扫描 {scanned_count} 个文件，发现 {new_files_count} 个新文件，耗时: {elapsed:.2f}秒，速率: {rate:.2f}文件/秒")
         
-        # 更新最终进度记录
-        cursor.execute('''
-        INSERT INTO scan_progress (device_uuid, total_files, new_files, last_updated)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(device_uuid) DO UPDATE SET
-            total_files=excluded.total_files,
-            new_files=excluded.new_files,
-            last_updated=excluded.last_updated
-        ''', (device_uuid, scanned_count, new_files_count, datetime.now()))
+        # 检查进度记录是否存在
+        cursor.execute(
+            "SELECT 1 FROM scan_progress WHERE device_uuid = ?", 
+            (device_uuid,)
+        )
+        progress_exists = cursor.fetchone() is not None
+        
+        if progress_exists:
+            # 更新现有进度
+            cursor.execute('''
+            UPDATE scan_progress SET 
+                total_files = ?,
+                new_files = ?,
+                last_updated = ?
+            WHERE device_uuid = ?
+            ''', (scanned_count, new_files_count, datetime.now(), device_uuid))
+        else:
+            # 插入新进度
+            cursor.execute('''
+            INSERT INTO scan_progress 
+            (device_uuid, total_files, new_files, last_updated)
+            VALUES (?, ?, ?, ?)
+            ''', (device_uuid, scanned_count, new_files_count, datetime.now()))
         
         # 清理临时表
         cursor.execute('DROP TABLE IF EXISTS scanned_files')
-        db.conn.commit()
-
-def calculate_file_hash(file_path, block_size=8192, max_size=10*1024*1024):
-    """
-    计算文件的哈希值 (仅计算前10MB内容)
-    
-    Args:
-        file_path (str): 文件路径
-        block_size (int): 每次读取的块大小
-        max_size (int): 最大处理的文件大小
-        
-    Returns:
-        str: 文件SHA256哈希值的16进制表示
-    """
-    sha256 = hashlib.sha256()
-    size = 0
-    
-    try:
-        with open(file_path, 'rb') as f:
-            while size < max_size:
-                data = f.read(block_size)
-                if not data:
-                    break
-                size += len(data)
-                sha256.update(data)
-        return sha256.hexdigest()
-    except Exception as e:
-        logger.error(f"计算文件哈希时出错: {file_path}, 错误: {e}")
-        return None
+        # 不再需要显式提交，上下文管理器会自动处理

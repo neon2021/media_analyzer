@@ -32,6 +32,8 @@ def update_device_registry(devices):
     # 当前活跃设备的UUID
     active_uuids = [device['uuid'] for device in devices]
     
+    updated_count = 0
+    
     with db.get_cursor() as cursor:
         # 创建设备挂载点映射表（如果不存在）
         cursor.execute('''
@@ -46,7 +48,6 @@ def update_device_registry(devices):
         ''')
         
         # 检查并更新现有设备
-        updated_count = 0
         for device in devices:
             # 检查设备是否已存在
             cursor.execute('''
@@ -85,8 +86,6 @@ def update_device_registry(devices):
         SET mount_path = NULL
         WHERE uuid NOT IN ({}) AND mount_path IS NOT NULL
         '''.format(','.join(['?'] * len(active_uuids))), active_uuids if active_uuids else [""])
-        
-        db.conn.commit()
     
     return updated_count
 

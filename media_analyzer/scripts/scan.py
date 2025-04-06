@@ -38,10 +38,6 @@ def main():
         logger.info("初始化数据库...")
         init_db()
 
-        # 更新设备注册表
-        logger.info("更新设备注册表...")
-        update_device_registry()
-
         # 获取所有设备
         logger.info("获取设备列表...")
         devices = list_all_device_ids()
@@ -49,6 +45,12 @@ def main():
         if not devices:
             logger.warning("未找到任何设备")
             return 0
+
+        # 更新设备注册表
+        logger.info("更新设备注册表...")
+        device_list = [{'uuid': uuid, 'mount_path': mount_path, 'label': os.path.basename(mount_path)} 
+                     for mount_path, uuid in devices.items()]
+        update_device_registry(device_list)
 
         # 扫描每个设备
         for mount_path, uuid in devices.items():

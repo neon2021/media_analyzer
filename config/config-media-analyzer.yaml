@@ -12,6 +12,37 @@ database:
     max_overflow: 10
     pool_timeout: 30
     pool_recycle: 3600
+  # Docker配置
+  docker:
+    # 通用配置
+    common:
+      port: 5433  # 映射到主机的端口
+      username: postgres
+      password: postgres
+      database: media_analyzer
+      container_name: postgres-db
+    # macOS专用配置
+    macos:
+      version: '3.8'
+      build_context: true  # 是否使用build而不是image
+      image: postgres:14
+      healthcheck: true
+      volume_name: postgres_data
+    # Linux专用配置  
+    linux:
+      version: '3'
+      build_context: false
+      image: postgres:14
+      healthcheck: false
+      volume_name: postgres-data
+    # Windows专用配置
+    windows:
+      version: '3'
+      build_context: false
+      image: postgres:14
+      healthcheck: false
+      volume_name: postgres-data
+      env_vars_format: direct  # 在Windows上不使用环境变量替换语法
 
 # 日志配置
 logging:

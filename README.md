@@ -79,10 +79,197 @@ python -m unittest discover media_analyzer/tests
 
 ### 数据库
 
+#### 自动配置（推荐）
+
+我们提供了一个自动化脚本，可以根据不同操作系统自动选择适合的数据库配置。这个脚本会自动检测您的操作系统，根据配置文件生成合适的 Docker Compose 配置，并启动 PostgreSQL 服务。
+
+```bash
+# 自动检测操作系统并启动数据库服务
+python scripts/db_setup.py
+
+# 使用测试配置
+python scripts/db_setup.py --test
+
+# 指定自定义配置文件
+python scripts/db_setup.py --config path/to/your/config.yaml
+
+# 如果需要，可以强制使用特定操作系统的配置
+python scripts/db_setup.py --os macos
+python scripts/db_setup.py --os linux
+python scripts/db_setup.py --os windows
+
+# 停止数据库服务
+python scripts/db_setup.py --stop
+
+# 重启数据库服务
+python scripts/db_setup.py --restart
+```
+
+数据库连接信息会根据配置文件自动确定，默认为:
+- 主机: localhost
+- 端口: 5433
+- 用户名: postgres
+- 密码: postgres
+- 数据库: media_analyzer
+
+#### 配置文件中的Docker设置
+
+您可以在配置文件中自定义不同操作系统下的Docker设置。以下是一个示例:
+
+```yaml
+database:
+  # 其他数据库设置...
+  docker:
+    # 所有平台通用的设置
+    common:
+      port: 5433  # 映射到主机的端口
+      username: postgres
+      password: postgres
+      database: media_analyzer
+      container_name: postgres-db
+    # macOS专用设置
+    macos:
+      version: '3.8'
+      build_context: true  # 使用Dockerfile构建还是直接使用镜像
+      image: postgres:14
+      healthcheck: true    # 是否启用健康检查
+      volume_name: postgres_data
+    # Linux专用设置  
+    linux:
+      version: '3'
+      build_context: false
+      image: postgres:14
+      healthcheck: false
+      volume_name: postgres-data
+    # Windows专用设置
+    windows:
+      version: '3'
+      build_context: false
+      image: postgres:14
+      healthcheck: false
+      volume_name: postgres-data
+      env_vars_format: direct  # 环境变量格式 (direct或template)
+```
+
+当您运行`db_setup.py`脚本时，它会根据您的操作系统选择相应的配置，生成适合的`docker-compose.yml`文件。
+
+#### macOS 手动配置
+
 系统支持使用PostgreSQL存储数据。使用Docker运行数据库：
 
 ```bash
 docker-compose up -d
+```
+
+#### Ubuntu 手动配置
+
+在Ubuntu上安装PostgreSQL有两种方式：本地安装或Docker安装。
+
+##### 方式一：本地安装PostgreSQL
+
+```bash
+# 更新包索引
+sudo apt update
+
+# 安装PostgreSQL及相关工具
+sudo apt install postgresql postgresql-contrib -y
+
+# 设置postgres用户密码
+sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+
+# 修改认证方式从scram-sha-256为md5
+sudo sed -i 's/scram-sha-256/md5/g' /etc/postgresql/14/main/pg_hba.conf
+
+# 重启PostgreSQL服务
+sudo systemctl restart postgresql
+
+# 创建应用数据库
+sudo -u postgres psql -c "CREATE DATABASE media_analyzer_test;"
+```
+
+##### 方式二：使用Docker安装PostgreSQL
+
+```bash
+# 安装Docker和Docker Compose
+sudo apt update
+sudo apt install docker.io docker-compose -y
+
+# 添加当前用户到docker组（需要重新登录才能生效）
+sudo usermod -aG docker $USER
+
+# 解决Docker网络连接问题
+echo '{"dns": ["8.8.8.8", "8.8.4.4"]}' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+
+# 创建Docker Compose配置
+mkdir -p ~/docker-postgres
+cd ~/docker-postgres
+
+cat > docker-compose.yml << EOF
+version: '3'
+
+services:
+  postgres:
+    image: postgres:14
+    container_name: postgres-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: media_analyzer_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+EOF
+
+# 启动PostgreSQL容器
+sudo docker-compose up -d
+
+# 或者直接使用docker命令
+sudo docker run --name postgres-db \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_DB=media_analyzer_test \
+  -p 5433:5432 \
+  -d postgres:14
+```
+
+##### Docker常用命令
+
+```bash
+# 查看容器状态
+docker ps
+
+# 查看容器日志
+docker logs postgres-db
+
+# 执行SQL命令
+docker exec -it postgres-db psql -U postgres -d media_analyzer_test -c "SELECT version();"
+
+# 获取交互式PostgreSQL shell
+docker exec -it postgres-db psql -U postgres -d media_analyzer_test
+
+# 停止容器
+docker stop postgres-db
+
+# 删除容器
+docker rm postgres-db
+```
+
+注意：如果使用Docker安装，需要在配置文件中设置端口为5433：
+
+```yaml
+database:
+  postgres:
+    host: localhost
+    port: 5433  # 从默认的5432改为5433
+    database: media_analyzer_test
+    username: postgres
+    password: postgres
 ```
 
 ```shell

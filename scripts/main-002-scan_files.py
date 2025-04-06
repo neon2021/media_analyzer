@@ -1,10 +1,11 @@
-from device_utils import list_all_device_ids
-from file_scanner import scan_files_on_device
-from db_init import init_db
-from update_device_registry import update_device_registry
-from config_manager import get_config
+from media_analyzer.utils.device_utils import list_all_device_ids
+from media_analyzer.core.file_scanner import scan_files_on_device
+from media_analyzer.db.db_init import init_db
+from media_analyzer.core.update_device_registry import update_device_registry
+from media_analyzer.utils.config_manager import get_config
 import argparse
 import logging
+import os
 
 if __name__=="__main__":
     # 获取配置（配置管理器会自动按优先级从多个位置加载配置）
@@ -16,16 +17,12 @@ if __name__=="__main__":
     
     try:
         # 确保配置已加载后再初始化数据库
-        from db_manager import get_db
+        from media_analyzer.db.db_manager import get_db
         db = get_db()  # 这会使用最新的配置初始化数据库
         
         # 初始化数据库（仅首次）
         logger.info("初始化数据库...")
         init_db()
-
-        # 更新设备注册表
-        logger.info("更新设备注册表...")
-        update_device_registry()
 
         # 获取所有设备
         logger.info("获取设备列表...")
@@ -34,6 +31,19 @@ if __name__=="__main__":
         if not devices:
             logger.warning("未找到任何设备")
             exit(0)
+        
+        # 构建设备列表，用于设备注册表更新
+        device_list = []
+        for mount_path, uuid in devices.items():
+            device_list.append({
+                'uuid': uuid,
+                'mount_path': mount_path,
+                'label': os.path.basename(mount_path) or 'Root'
+            })
+            
+        # 更新设备注册表
+        logger.info("更新设备注册表...")
+        update_device_registry(device_list)
 
         # 扫描每个设备
         for mount_path, uuid in devices.items():
