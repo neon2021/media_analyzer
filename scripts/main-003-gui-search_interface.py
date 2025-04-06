@@ -1,4 +1,4 @@
-from search_interface import search_images
+from media_analyzer.api.search_interface import search_images
 
 results = search_images(
     object_keywords=["dog", "car"],

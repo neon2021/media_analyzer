@@ -1,87 +1,277 @@
-import os
-import sqlite3
-import threading
-from contextlib import contextmanager
-from queue import Queue
-from typing import Optional
-from media_analyzer.utils.config_manager import get_config
+"""
+数据库管理模块，负责数据库连接和基础数据库操作
+"""
 
-class DatabaseManager:
-    _instance = None
-    _lock = threading.Lock()
-    
-    def __new__(cls):
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = super(DatabaseManager, cls).__new__(cls)
-                cls._instance._initialized = False
-            return cls._instance
-    
-    def __init__(self):
-        if self._initialized:
-            return
-            
-        config = get_config()
-        print(f'[DEBUG] DatabaseManager init - config from get_config: {config}')
-        print(f'[DEBUG] DatabaseManager init - database.path: {config.get("database.path")}')
-        self.db_path = os.path.expanduser(config.get('database.path', 'media_index.db'))
-        print(f'[DEBUG] DatabaseManager init - final db_path: {self.db_path}')
-        self.pool_size = 5
-        self.connection_pool = Queue(maxsize=self.pool_size)
-        self._lock = threading.Lock()
+import os
+import logging
+import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from typing import Dict, Any, Optional, List, Tuple, Union
+
+from media_analyzer.utils.config_manager import get_database_config, get_postgres_dsn
+
+logger = logging.getLogger(__name__)
+
+
+class DBManager:
+    """数据库管理类，提供统一的数据库操作接口，支持SQLite和PostgreSQL"""
+
+    def __init__(self, db_type: str = "sqlite", connection_string: Optional[str] = None):
+        """
+        初始化数据库管理器
         
-        # 确保数据库目录存在
-        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+        Args:
+            db_type: 数据库类型，"sqlite"或"postgres"
+            connection_string: 连接字符串，如果为None则从配置中读取
+        """
+        self.db_type = db_type.lower()
+        self.conn = None
+        self.cursor = None
         
-        # 初始化连接池
-        for _ in range(self.pool_size):
-            conn = self._create_connection()
-            self.connection_pool.put(conn)
-            
-        self._initialized = True
-    
-    def _create_connection(self) -> sqlite3.Connection:
-        """创建一个新的数据库连接"""
-        conn = sqlite3.connect(
-            self.db_path,
-            timeout=30.0,  # 连接超时时间
-            isolation_level='IMMEDIATE'  # 事务隔离级别
-        )
-        # 启用外键约束
-        conn.execute('PRAGMA foreign_keys = ON')
-        # 启用WAL模式以提高并发性能
-        conn.execute('PRAGMA journal_mode=WAL')
-        return conn
-    
-    @contextmanager
-    def get_connection(self) -> sqlite3.Connection:
-        """从连接池获取一个连接"""
-        connection = self.connection_pool.get()
+        if self.db_type == "sqlite":
+            if connection_string is None:
+                db_config = get_database_config()
+                connection_string = db_config["path"]
+            self._connect_sqlite(connection_string)
+        elif self.db_type == "postgres":
+            if connection_string is None:
+                connection_string = get_postgres_dsn()
+            self._connect_postgres(connection_string)
+        else:
+            raise ValueError(f"不支持的数据库类型: {db_type}")
+        
+        logger.info(f"已连接到 {self.db_type} 数据库")
+
+    def _connect_sqlite(self, db_path: str):
+        """
+        连接到SQLite数据库
+        
+        Args:
+            db_path: 数据库文件路径
+        """
         try:
-            yield connection
-        finally:
-            self.connection_pool.put(connection)
-    
-    @contextmanager
-    def get_cursor(self, commit=True):
-        """获取数据库游标，自动处理提交和回滚"""
-        with self.get_connection() as connection:
-            cursor = connection.cursor()
-            try:
-                yield cursor
-                if commit:
-                    connection.commit()
-            except Exception as e:
-                connection.rollback()
-                raise e
-            finally:
-                cursor.close()
-    
-    def close_all(self):
-        """关闭所有连接"""
-        while not self.connection_pool.empty():
-            conn = self.connection_pool.get()
-            conn.close()
+            self.conn = sqlite3.connect(db_path)
+            self.conn.row_factory = sqlite3.Row
+            self.cursor = self.conn.cursor()
+        except Exception as e:
+            logger.error(f"连接SQLite数据库失败: {e}")
+            raise
+
+    def _connect_postgres(self, connection_string: str):
+        """
+        连接到PostgreSQL数据库
+        
+        Args:
+            connection_string: 数据库连接字符串
+        """
+        try:
+            self.conn = psycopg2.connect(connection_string)
+            self.cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+        except Exception as e:
+            logger.error(f"连接PostgreSQL数据库失败: {e}")
+            raise
+
+    def close(self):
+        """关闭数据库连接"""
+        if self.conn:
+            self.conn.close()
+            logger.debug("数据库连接已关闭")
+
+    def commit(self):
+        """提交事务"""
+        if self.conn:
+            self.conn.commit()
+
+    def rollback(self):
+        """回滚事务"""
+        if self.conn:
+            self.conn.rollback()
+
+    def execute(self, query: str, params: Optional[Tuple] = None) -> int:
+        """
+        执行SQL语句
+        
+        Args:
+            query: SQL查询语句
+            params: 查询参数
+            
+        Returns:
+            受影响的行数
+        """
+        try:
+            if params:
+                self.cursor.execute(query, params)
+            else:
+                self.cursor.execute(query)
+                
+            # 对于非查询操作，获取受影响的行数
+            if query.strip().upper().startswith(("INSERT", "UPDATE", "DELETE")):
+                if self.db_type == "sqlite":
+                    return self.cursor.rowcount
+                else:  # postgres
+                    return self.cursor.rowcount
+            return 0
+        except Exception as e:
+            logger.error(f"执行SQL失败: {query}, 错误: {e}")
+            self.rollback()
+            raise
+
+    def executemany(self, query: str, params_list: List[Tuple]) -> int:
+        """
+        批量执行SQL语句
+        
+        Args:
+            query: SQL查询语句
+            params_list: 查询参数列表
+            
+        Returns:
+            受影响的行数
+        """
+        try:
+            self.cursor.executemany(query, params_list)
+            if self.db_type == "sqlite":
+                return self.cursor.rowcount
+            else:  # postgres
+                return self.cursor.rowcount
+        except Exception as e:
+            logger.error(f"批量执行SQL失败: {query}, 错误: {e}")
+            self.rollback()
+            raise
+
+    def fetch_one(self) -> Optional[Dict[str, Any]]:
+        """
+        获取一条查询结果
+        
+        Returns:
+            结果字典，如果没有结果则返回None
+        """
+        row = self.cursor.fetchone()
+        if row is None:
+            return None
+            
+        if self.db_type == "sqlite":
+            return {k: row[k] for k in row.keys()}
+        return dict(row)
+
+    def fetch_all(self) -> List[Dict[str, Any]]:
+        """
+        获取所有查询结果
+        
+        Returns:
+            结果字典列表
+        """
+        rows = self.cursor.fetchall()
+        if self.db_type == "sqlite":
+            return [{k: row[k] for k in row.keys()} for row in rows]
+        return [dict(row) for row in rows]
+
+    def query(self, query: str, params: Optional[Tuple] = None) -> List[Dict[str, Any]]:
+        """
+        执行查询并返回所有结果
+        
+        Args:
+            query: SQL查询语句
+            params: 查询参数
+            
+        Returns:
+            结果字典列表
+        """
+        self.execute(query, params)
+        return self.fetch_all()
+
+    def query_one(self, query: str, params: Optional[Tuple] = None) -> Optional[Dict[str, Any]]:
+        """
+        执行查询并返回一条结果
+        
+        Args:
+            query: SQL查询语句
+            params: 查询参数
+            
+        Returns:
+            结果字典，如果没有结果则返回None
+        """
+        self.execute(query, params)
+        return self.fetch_one()
+
+    def create_table(self, table_name: str, columns: Dict[str, str], if_not_exists: bool = True):
+        """
+        创建表
+        
+        Args:
+            table_name: 表名
+            columns: 列定义字典，键为列名，值为列类型
+            if_not_exists: 是否仅在表不存在时创建
+        """
+        column_defs = [f"{name} {type_}" for name, type_ in columns.items()]
+        exists_clause = "IF NOT EXISTS " if if_not_exists else ""
+        query = f"CREATE TABLE {exists_clause}{table_name} ({', '.join(column_defs)})"
+        self.execute(query)
+        self.commit()
+
+    def table_exists(self, table_name: str) -> bool:
+        """
+        检查表是否存在
+        
+        Args:
+            table_name: 表名
+            
+        Returns:
+            表是否存在
+        """
+        if self.db_type == "sqlite":
+            query = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+            self.execute(query, (table_name,))
+        else:  # postgres
+            query = "SELECT table_name FROM information_schema.tables WHERE table_name=%s"
+            self.execute(query, (table_name,))
+            
+        return self.fetch_one() is not None
+
+    def get_table_schema(self, table_name: str) -> List[Dict[str, Any]]:
+        """
+        获取表结构
+        
+        Args:
+            table_name: 表名
+            
+        Returns:
+            表结构字典列表
+        """
+        if self.db_type == "sqlite":
+            query = f"PRAGMA table_info({table_name})"
+            self.execute(query)
+        else:  # postgres
+            query = """
+            SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_name = %s
+            """
+            self.execute(query, (table_name,))
+            
+        return self.fetch_all()
+
+    def get_tables(self) -> List[str]:
+        """
+        获取所有表名
+        
+        Returns:
+            表名列表
+        """
+        if self.db_type == "sqlite":
+            query = "SELECT name FROM sqlite_master WHERE type='table'"
+            self.execute(query)
+            result = self.fetch_all()
+            return [row['name'] for row in result]
+        else:  # postgres
+            query = """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            """
+            self.execute(query)
+            result = self.fetch_all()
+            return [row['table_name'] for row in result]
 
 # 全局数据库管理器实例
 db = None
@@ -90,5 +280,5 @@ def get_db():
     """获取数据库管理器实例"""
     global db
     if db is None:
-        db = DatabaseManager()
+        db = DBManager()
     return db 

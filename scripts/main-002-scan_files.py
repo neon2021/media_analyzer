@@ -2,17 +2,21 @@ from media_analyzer.utils.device_utils import list_all_device_ids
 from media_analyzer.core.file_scanner import scan_files_on_device
 from media_analyzer.db.db_init import init_db
 from media_analyzer.core.update_device_registry import update_device_registry
-from media_analyzer.utils.config_manager import get_config
+from media_analyzer.utils.config_manager import ConfigManager, get_config
 import argparse
 import logging
 import os
 
 if __name__=="__main__":
-    # 获取配置（配置管理器会自动按优先级从多个位置加载配置）
+    # 获取配置管理器（会自动按优先级从多个位置加载配置）
+    config_manager = ConfigManager()
     config = get_config()
     
     # 设置日志
-    config.setup_logging()
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     logger = logging.getLogger(__name__)
     
     try:

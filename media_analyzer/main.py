@@ -1,237 +1,158 @@
 #!/usr/bin/env python3
+"""
+Media Analyzer 主程序
+
+负责启动主界面，处理命令行参数，并调用相应的功能模块
+"""
+
 import os
 import sys
-import argparse
 import logging
-import platform
-from datetime import datetime
+import argparse
+from typing import Dict, Any, List, Optional
 
-# 添加项目根目录到路径
+# 将项目根目录添加到导入路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# 设置日志
+from media_analyzer.utils.device_utils import list_all_device_ids
+from media_analyzer.core.update_device_registry import update_device_registry, mark_inactive_devices
+from media_analyzer.utils.config_manager import get_config, get_system_id
+
+# 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(f'media_analyzer_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+        logging.FileHandler('media_analyzer.log')
     ]
 )
 
 logger = logging.getLogger(__name__)
 
-from media_analyzer.db.db_init import init_db
-from media_analyzer.utils.device_utils import list_all_devices, get_device_info
-from media_analyzer.core.update_device_registry import update_device_registry
-from media_analyzer.core.file_scanner import scan_files_on_device
-from media_analyzer.core.file_retriever import get_file_path, search_files
-from media_analyzer.config import load_config, get_config
 
-def init_command(args):
-    """初始化数据库"""
-    logger.info("初始化数据库")
-    init_db()
-    logger.info("数据库初始化完成")
+def list_devices() -> List[Dict[str, Any]]:
+    """
+    列出当前系统中的所有设备
+    
+    Returns:
+        设备信息列表
+    """
+    devices = list_all_device_ids()
+    system_id = get_system_id()
+    
+    device_list = []
+    for mount_path, uuid in devices.items():
+        label = os.path.basename(mount_path)
+        device_list.append({
+            'uuid': uuid,
+            'path': mount_path,
+            'label': label,
+            'system_id': system_id
+        })
+        
+        # 更新设备注册表
+        update_device_registry(uuid, device_info={
+            'uuid': uuid,
+            'path': mount_path,
+            'label': label
+        }, system_id=system_id)
+    
+    return device_list
 
-def devices_command(args):
-    """列出所有设备"""
-    logger.info("列出所有设备")
-    devices = list_all_devices()
-    
-    if not devices:
-        logger.info("没有找到设备")
-        return
-    
-    print("\n发现以下设备:")
-    print("=" * 80)
-    print(f"{'UUID':<36} | {'标签':<20} | {'挂载点'}")
-    print("-" * 80)
-    
-    for device in devices:
-        print(f"{device['uuid']:<36} | {device['label']:<20} | {device['mount_path']}")
-    
-    print("=" * 80)
-    
-    # 更新设备注册表
-    if not args.no_update:
-        logger.info("更新设备注册表")
-        update_device_registry(devices)
 
-def scan_command(args):
-    """扫描指定设备上的文件"""
-    mount_path = args.path
+def update_all_devices() -> int:
+    """
+    更新所有设备的注册信息
     
-    # 获取设备信息
-    device_info = get_device_info(mount_path)
+    Returns:
+        更新的设备数量
+    """
+    system_id = get_system_id()
+    devices = list_all_device_ids()
     
-    if not device_info:
-        # 尝试使用命令行指定的UUID
-        if args.uuid:
-            device_info = {
-                'uuid': args.uuid,
-                'mount_path': mount_path,
-                'label': os.path.basename(mount_path)
-            }
-            logger.info(f"使用命令行指定的UUID: {args.uuid}")
-        else:
-            logger.error(f"无法获取挂载点 {mount_path} 的设备信息，请使用 --uuid 参数指定设备UUID")
-            return
+    count = 0
+    for mount_path, uuid in devices.items():
+        label = os.path.basename(mount_path)
+        success = update_device_registry(uuid, device_info={
+            'uuid': uuid,
+            'path': mount_path,
+            'label': label
+        }, system_id=system_id)
+        
+        if success:
+            count += 1
     
-    # 更新设备注册表
-    update_device_registry([device_info])
+    # 标记不再存在的设备为非活动状态
+    mark_inactive_devices(system_id)
     
-    print(f"\n开始扫描设备: {device_info['label']} (UUID: {device_info['uuid']})")
-    print(f"挂载点: {device_info['mount_path']}")
-    print("=" * 80)
-    
-    # 开始扫描
-    scan_files_on_device(device_info['mount_path'], device_info['uuid'])
-    
-    print("=" * 80)
-    print("扫描完成")
+    return count
 
-def search_command(args):
-    """搜索文件"""
-    # 构建搜索参数
-    params = {
-        'keyword': args.keyword,
-        'device_uuid': args.device,
-        'file_type': args.type,
-        'limit': args.limit,
-        'offset': args.offset
-    }
-    
-    if args.min_size:
-        params['min_size'] = args.min_size
-    
-    if args.max_size:
-        params['max_size'] = args.max_size
-    
-    # 执行搜索
-    results = search_files(**params)
-    
-    if not results:
-        print("未找到匹配的文件")
-        return
-    
-    print(f"\n找到 {len(results)} 个匹配的文件:")
-    print("=" * 120)
-    print(f"{'ID':<6} | {'设备':<15} | {'大小':>10} | {'修改时间':<19} | {'路径'}")
-    print("-" * 120)
-    
-    for result in results:
-        size_str = format_size(result['size'])
-        modified_time = result['modified_time'].strftime('%Y-%m-%d %H:%M:%S') if result['modified_time'] else 'N/A'
-        print(f"{result['id']:<6} | {result['device_label']:<15} | {size_str:>10} | {modified_time:<19} | {result['path']}")
-    
-    print("=" * 120)
-
-def get_command(args):
-    """获取文件路径"""
-    file_id = args.id
-    system_id = args.system_id
-    
-    # 获取文件路径
-    file_path = get_file_path(file_id, system_id)
-    
-    if not file_path:
-        print(f"无法获取ID为 {file_id} 的文件路径")
-        return
-    
-    print(f"文件路径: {file_path}")
-    
-    # 如果指定了打开文件
-    if args.open:
-        open_file(file_path)
-
-def open_file(path):
-    """打开文件"""
-    system = platform.system()
-    
-    try:
-        if system == 'Darwin':  # macOS
-            os.system(f'open "{path}"')
-        elif system == 'Linux':
-            os.system(f'xdg-open "{path}"')
-        elif system == 'Windows':
-            os.system(f'start "" "{path}"')
-        else:
-            logger.warning(f"不支持的操作系统: {system}")
-    except Exception as e:
-        logger.error(f"打开文件失败: {e}")
-
-def format_size(size_bytes):
-    """格式化文件大小"""
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes/1024:.1f} KB"
-    elif size_bytes < 1024 * 1024 * 1024:
-        return f"{size_bytes/(1024*1024):.1f} MB"
-    else:
-        return f"{size_bytes/(1024*1024*1024):.1f} GB"
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description="媒体文件分析工具")
+    parser = argparse.ArgumentParser(description="Media Analyzer - 媒体文件分析工具")
     
-    # 加载配置
-    config = load_config()
+    # 命令行参数
+    parser.add_argument('--config', type=str, help='配置文件路径')
+    parser.add_argument('--list-devices', action='store_true', help='列出所有连接的设备')
+    parser.add_argument('--update-registry', action='store_true', help='更新设备注册表')
+    parser.add_argument('--scan', type=str, help='扫描指定目录')
+    parser.add_argument('--db-type', default='postgres', choices=['sqlite', 'postgres'], help='数据库类型')
     
-    # 创建子命令
-    subparsers = parser.add_subparsers(dest='command', help='可用命令')
-    
-    # init 命令
-    init_parser = subparsers.add_parser('init', help='初始化数据库')
-    init_parser.set_defaults(func=init_command)
-    
-    # devices 命令
-    devices_parser = subparsers.add_parser('devices', help='列出所有设备')
-    devices_parser.add_argument('--no-update', action='store_true', help='不更新设备注册表')
-    devices_parser.set_defaults(func=devices_command)
-    
-    # scan 命令
-    scan_parser = subparsers.add_parser('scan', help='扫描设备上的文件')
-    scan_parser.add_argument('path', help='设备挂载路径')
-    scan_parser.add_argument('--uuid', help='设备UUID（如果无法自动获取）')
-    scan_parser.set_defaults(func=scan_command)
-    
-    # search 命令
-    search_parser = subparsers.add_parser('search', help='搜索文件')
-    search_parser.add_argument('--keyword', help='搜索关键词')
-    search_parser.add_argument('--device', help='设备UUID')
-    search_parser.add_argument('--type', help='文件类型')
-    search_parser.add_argument('--min-size', type=int, help='最小文件大小（字节）')
-    search_parser.add_argument('--max-size', type=int, help='最大文件大小（字节）')
-    search_parser.add_argument('--limit', type=int, default=100, help='结果数量限制')
-    search_parser.add_argument('--offset', type=int, default=0, help='结果偏移量')
-    search_parser.set_defaults(func=search_command)
-    
-    # get 命令
-    get_parser = subparsers.add_parser('get', help='获取文件路径')
-    get_parser.add_argument('id', type=int, help='文件ID')
-    get_parser.add_argument('--system-id', help='系统ID')
-    get_parser.add_argument('--open', action='store_true', help='打开文件')
-    get_parser.set_defaults(func=get_command)
-    
-    # 解析命令行参数
     args = parser.parse_args()
     
-    # 如果没有指定命令，显示帮助信息
-    if not args.command:
-        parser.print_help()
-        return
+    # 加载配置
+    config = get_config()
+    system_id = get_system_id()
+    logger.info(f"系统ID: {system_id}")
     
-    # 执行相应的命令
-    args.func(args)
+    # 处理命令行选项
+    if args.list_devices:
+        devices = list_devices()
+        print("\n连接的设备列表:")
+        if devices:
+            for device in devices:
+                print(f"  - UUID: {device['uuid']}")
+                print(f"    挂载点: {device['path']}")
+                print(f"    标签: {device['label']}")
+                print(f"    系统: {device['system_id']}")
+                print("")
+        else:
+            print("  未找到设备\n")
+        return 0
+        
+    elif args.update_registry:
+        count = update_all_devices()
+        print(f"\n已更新 {count} 个设备的注册信息\n")
+        return 0
+        
+    elif args.scan:
+        # 导入并执行扫描模块
+        scan_dir = os.path.abspath(args.scan)
+        
+        # 检查目录是否存在
+        if not os.path.exists(scan_dir):
+            logger.error(f"目录不存在: {scan_dir}")
+            return 1
+            
+        logger.info(f"开始扫描目录: {scan_dir}")
+        
+        # 导入扫描模块并执行
+        from media_analyzer.scripts.scan import scan_directory
+        from media_analyzer.db.db_manager import DBManager
+        
+        db_manager = DBManager(db_type=args.db_type)
+        file_infos, error_files = scan_directory(scan_dir, db_manager, system_id)
+        
+        logger.info(f"扫描完成，发现 {len(file_infos)} 个文件，{len(error_files)} 个错误")
+        return 0
+        
+    else:
+        # 默认行为：打印帮助信息
+        parser.print_help()
+        return 0
 
-if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("用户中断操作")
-        sys.exit(0)
-    except Exception as e:
-        logger.exception("程序出错")
-        sys.exit(1) 
+
+if __name__ == "__main__":
+    sys.exit(main()) 

@@ -1,6 +1,129 @@
 # Media Analyzer
 
-媒体文件分析和管理系统，支持扫描、分析和搜索媒体文件。
+媒体文件分析工具，用于跟踪和管理多个外部设备上的媒体文件。
+
+## 功能特点
+
+- 扫描并索引外部设备上的媒体文件
+- 自动检测和管理设备挂载
+- 支持多系统环境下的设备识别
+- 使用PostgreSQL数据库存储文件元数据
+- 提供命令行工具进行文件搜索和管理
+
+## 安装说明
+
+### 安装依赖
+
+```bash
+# 使用pip安装
+pip install -e .
+
+# 或使用requirements.txt
+pip install -r requirements.txt
+```
+
+### 数据库设置
+
+项目使用PostgreSQL数据库存储文件元数据。可以通过Docker快速设置PostgreSQL:
+
+```bash
+docker-compose up -d postgres
+```
+
+数据库表结构自动创建，主要包含:
+
+- `devices`: 存储设备信息，包含UUID和挂载点
+  - 设备表使用(`uuid`, `system_id`)作为联合唯一索引，允许同一设备在不同系统上使用
+- `files`: 存储文件元数据，包含路径、大小、哈希值等
+
+## 配置
+
+项目使用YAML配置文件，配置文件位置可以是:
+
+- `./config-media-analyzer.yaml` (当前目录)
+- `~/config-media-analyzer.yaml` (用户主目录)
+- `./config/config-media-analyzer.yaml` (config子目录)
+- `~/.config/media-analyzer/config.yaml` (系统配置目录)
+
+可以复制`config/config-template.yaml`并根据需要修改:
+
+```yaml
+# 系统配置
+system:
+  id: "auto"  # 系统ID，设置为"auto"会根据主机名和系统类型自动生成
+
+# 数据库配置
+database:
+  # SQLite配置
+  path: "media_analyzer.db"  # SQLite数据库文件路径
+  
+  # PostgreSQL配置
+  postgres:
+    host: "localhost"  # 数据库主机名
+    port: 5432  # 端口号
+    database: "media_analyzer"  # 数据库名称
+    username: "postgres"  # 用户名
+    password: "postgres"  # 密码
+
+# 扫描配置
+scan:
+  hash_timeout: 10  # 单个文件哈希计算超时时间（秒）
+  progress_interval: 30  # 进度报告间隔（秒）
+  skip_dirs:  # 扫描时跳过的目录
+    - "/System"
+    - "/Volumes/Recovery"
+    # ...更多跳过目录
+```
+
+## 使用方法
+
+### 列出设备
+
+```bash
+python -m media_analyzer.main --list-devices
+```
+
+### 更新设备注册表
+
+```bash
+python -m media_analyzer.main --update-registry
+```
+
+### 扫描设备
+
+```bash
+python -m media_analyzer.main --scan /Volumes/MyExternalDrive
+```
+
+### 数据库查询示例
+
+```bash
+python -m media_analyzer.scripts.show_db_tables
+```
+
+## 开发
+
+### 代码结构
+
+- `media_analyzer/`: 主程序包
+  - `core/`: 核心功能模块
+  - `db/`: 数据库操作
+  - `scripts/`: 命令行脚本
+  - `utils/`: 工具函数
+
+### 测试
+
+```bash
+# 运行单元测试
+pytest media_analyzer/tests/unit
+
+# 运行集成测试
+pytest media_analyzer/tests/integration
+```
+
+## 许可证
+
+本项目采用MIT许可证。详情请参阅LICENSE文件。
 
 ## 项目结构
 
@@ -136,13 +259,6 @@ database:
       volume_name: postgres_data
     # Linux专用设置  
     linux:
-      version: '3'
-      build_context: false
-      image: postgres:14
-      healthcheck: false
-      volume_name: postgres-data
-    # Windows专用设置
-    windows:
       version: '3'
       build_context: false
       image: postgres:14

@@ -1,15 +1,27 @@
+"""
+配置管理模块，统一处理YAML格式的配置文件。
+
+此模块负责:
+1. 加载配置文件 (config-media-analyzer.yaml)
+2. 提供配置项访问接口
+3. 确保配置一致性和默认值
+"""
+
 import os
 import yaml
 import logging
+import json
+import socket
+import platform
+import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional
 from logging.handlers import RotatingFileHandler
-import json
-import argparse
-import socket
 
 # 配置文件的默认路径
 DEFAULT_CONFIG_FILENAME = "config-media-analyzer.yaml"
+
+logger = logging.getLogger(__name__)
 
 class ConfigManager:
     _instance = None
@@ -23,8 +35,11 @@ class ConfigManager:
         if not hasattr(self, '_config'):
             # 默认配置
             self._config = {
+                'system': {
+                    'id': 'auto'  # 自动基于主机名生成
+                },
                 'database': {
-                    'path': 'media_index.db',
+                    'path': 'media_analyzer.db',
                     'postgres': {
                         'host': 'localhost',  # 默认使用localhost
                         'port': 5432,
@@ -54,6 +69,8 @@ class ConfigManager:
             }
             # 检测是否在Docker环境中运行
             self._detect_environment()
+            # 处理系统ID
+            self._process_system_id()
             # 加载配置文件（按优先级从低到高）
             self._load_config_files()
     
@@ -66,21 +83,30 @@ class ConfigManager:
             with open('/proc/self/cgroup', 'r') as f:
                 is_docker = 'docker' in f.read()
         except:
-            # 尝试访问Docker容器名称
-            try:
-                socket.gethostbyname('media_analyzer_postgres')
-                is_docker = True
-            except:
-                is_docker = False
+            # 检查Docker环境文件
+            is_docker = os.path.exists("/.dockerenv")
+            if not is_docker:
+                # 尝试访问Docker容器名称
+                try:
+                    socket.gethostbyname('postgres')
+                    is_docker = True
+                except:
+                    is_docker = False
         
         self._config['environment']['is_docker'] = is_docker
-        print(f"检测到环境: {'Docker' if is_docker else '本地'}")
+        logger.info(f"检测到环境: {'Docker' if is_docker else '本地'}")
         
         # 根据环境设置PostgreSQL主机
         if is_docker:
-            self._config['database']['postgres']['host'] = 'media_analyzer_postgres'
-        else:
-            self._config['database']['postgres']['host'] = 'localhost'
+            self._config['database']['postgres']['host'] = 'postgres'
+    
+    def _process_system_id(self):
+        """处理系统ID"""
+        if self._config['system']['id'] == 'auto':
+            system_type = platform.system().lower()
+            hostname = socket.gethostname()
+            self._config['system']['id'] = f"{system_type}-{hostname}"
+            logger.info(f"设置系统ID: {self._config['system']['id']}")
     
     def _load_config_files(self):
         """加载所有配置文件，按优先级从低到高"""
@@ -94,29 +120,34 @@ class ConfigManager:
         # 2. 检查用户根目录的配置文件 (考虑多个可能位置)
         user_home_configs = [
             os.path.join(str(Path.home()), DEFAULT_CONFIG_FILENAME),
-            os.path.join(str(Path.home().joinpath('Documents')), DEFAULT_CONFIG_FILENAME)
+            os.path.join(str(Path.home().joinpath('Documents')), DEFAULT_CONFIG_FILENAME),
+            os.path.expanduser("~/.config/media-analyzer/config.yaml")
         ]
         
         for user_config in user_home_configs:
             if os.path.exists(user_config):
-                print(f'找到用户配置: {user_config}')
+                logger.info(f'找到用户配置: {user_config}')
                 config_paths.append(user_config)
-                break
         
-        # 3. 检查命令行参数中的配置文件路径
+        # 3. 检查项目配置目录
+        project_config = "./config/config-media-analyzer.yaml"
+        if os.path.exists(project_config):
+            config_paths.append(project_config)
+        
+        # 4. 检查命令行参数中的配置文件路径
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument('--config', type=str, help='配置文件路径')
         try:
             args, _ = parser.parse_known_args()
             if args.config and os.path.exists(args.config):
-                print(f'命令行指定配置: {args.config}')
+                logger.info(f'命令行指定配置: {args.config}')
                 config_paths.append(args.config)
         except Exception as e:
-            print(f"解析命令行参数时出错: {e}")
+            logger.warning(f"解析命令行参数时出错: {e}")
         
         # 按优先级顺序加载配置文件
         for config_path in config_paths:
-            print(f"加载配置文件: {config_path}")
+            logger.info(f"加载配置文件: {config_path}")
             self.load_config(config_path)
     
     def load_config(self, config_path: str) -> None:
@@ -126,10 +157,10 @@ class ConfigManager:
                 loaded_config = yaml.safe_load(f)
                 if loaded_config:
                     self._update_config(loaded_config)
-                    print(f"成功加载配置文件: {config_path}")
+                    logger.info(f"成功加载配置文件: {config_path}")
         except Exception as e:
-            print(f"加载配置文件失败 {config_path}: {e}")
-            print("将使用已有配置")
+            logger.warning(f"加载配置文件失败 {config_path}: {e}")
+            logger.info("将使用已有配置")
     
     def _update_config(self, new_config: Dict[str, Any]) -> None:
         """递归更新配置"""
@@ -144,7 +175,10 @@ class ConfigManager:
         
         # 在Docker环境中强制使用容器名称作为主机名
         if self._config['environment']['is_docker']:
-            self._config['database']['postgres']['host'] = 'media_analyzer_postgres'
+            self._config['database']['postgres']['host'] = 'postgres'
+        
+        # 重新处理系统ID（如果需要）
+        self._process_system_id()
     
     def get(self, key: str, default: Any = None) -> Any:
         """获取配置值"""
@@ -156,6 +190,10 @@ class ConfigManager:
             else:
                 return default
         return value
+    
+    def get_dict(self) -> Dict[str, Any]:
+        """获取完整配置字典"""
+        return self._config
     
     def setup_logging(self) -> None:
         """设置日志系统"""
@@ -207,9 +245,50 @@ class ConfigManager:
         
         return '\n'.join(lines)
 
-# 全局配置管理器实例
-config = ConfigManager()
 
-def get_config():
-    """获取配置管理器实例"""
-    return config 
+# 全局配置管理器实例
+_config_manager = ConfigManager()
+
+
+# 函数接口，与之前的config_manager.py保持兼容
+def get_config() -> Dict[str, Any]:
+    """获取配置字典"""
+    return _config_manager.get_dict()
+
+
+def get_system_id() -> str:
+    """获取系统ID"""
+    return _config_manager.get('system.id')
+
+
+def get_database_config() -> Dict[str, Any]:
+    """获取数据库配置"""
+    return _config_manager.get('database')
+
+
+def get_postgres_dsn() -> str:
+    """获取PostgreSQL数据库连接字符串"""
+    db_config = get_database_config()['postgres']
+    return f"postgresql://{db_config['username']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['database']}"
+
+
+def get_logging_config() -> Dict[str, Any]:
+    """获取日志配置"""
+    return _config_manager.get('logging')
+
+
+def get_scan_config() -> Dict[str, Any]:
+    """获取扫描配置"""
+    return _config_manager.get('scan')
+
+
+def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """加载配置文件，保持向后兼容"""
+    if config_path:
+        _config_manager.load_config(config_path)
+    return get_config()
+
+
+def setup_logging() -> None:
+    """设置日志系统"""
+    _config_manager.setup_logging() 
