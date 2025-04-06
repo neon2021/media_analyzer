@@ -39,7 +39,8 @@ class ConfigManager:
                     'id': 'auto'  # 自动基于主机名生成
                 },
                 'database': {
-                    'path': 'media_analyzer.db',
+                    'type': 'postgresql',  # 明确指定默认使用PostgreSQL
+                    'path': 'media_analyzer.db',  # 仅用于SQLite或回退情况
                     'postgres': {
                         'host': 'localhost',  # 默认使用localhost
                         'port': 5432,

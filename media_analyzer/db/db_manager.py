@@ -9,7 +9,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Dict, Any, Optional, List, Tuple, Union
 
-from media_analyzer.utils.config_manager import get_database_config, get_postgres_dsn
+from media_analyzer.utils.config_manager import get_database_config, get_postgres_dsn, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 class DBManager:
     """数据库管理类，提供统一的数据库操作接口，支持SQLite和PostgreSQL"""
 
-    def __init__(self, db_type: str = "sqlite", connection_string: Optional[str] = None):
+    def __init__(self, db_type: str = "postgresql", connection_string: Optional[str] = None):
         """
         初始化数据库管理器
         
         Args:
-            db_type: 数据库类型，"sqlite"或"postgres"
+            db_type: 数据库类型，"sqlite"或"postgresql"/"postgres"
             connection_string: 连接字符串，如果为None则从配置中读取
         """
         self.db_type = db_type.lower()
@@ -32,9 +32,14 @@ class DBManager:
         if self.db_type == "sqlite":
             if connection_string is None:
                 db_config = get_database_config()
-                connection_string = db_config["path"]
+                # 使用配置的路径，展开用户目录
+                db_path = db_config.get("path", "media_analyzer.db")
+                db_path = os.path.expanduser(db_path)
+                # 确保目录存在
+                os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+                connection_string = db_path
             self._connect_sqlite(connection_string)
-        elif self.db_type == "postgres":
+        elif self.db_type in ["postgres", "postgresql"]:
             if connection_string is None:
                 connection_string = get_postgres_dsn()
             self._connect_postgres(connection_string)
@@ -280,5 +285,43 @@ def get_db():
     """获取数据库管理器实例"""
     global db
     if db is None:
-        db = DBManager()
+        config = get_config()
+        logging.info(f'config: \n{config}')
+        
+        # 读取数据库类型配置 - 优先使用PostgreSQL
+        db_type = config.get('database.type', 'postgresql').lower()
+        
+        try:
+            if db_type == 'postgresql' or db_type == 'postgres':
+                # 尝试连接PostgreSQL
+                db = DBManager(db_type='postgres')
+                logger.info(f"已成功连接到 PostgreSQL 数据库")
+            elif db_type == 'sqlite':
+                # 只有明确配置为sqlite时才使用sqlite
+                db = DBManager(db_type='sqlite')
+                logger.info(f"已成功连接到 SQLite 数据库 (配置指定)")
+            else:
+                # 不支持的数据库类型，回退到PostgreSQL
+                logger.warning(f"不支持的数据库类型 '{db_type}'，回退到 PostgreSQL")
+                db = DBManager(db_type='postgres')
+        except Exception as e:
+            # 数据库连接失败，抛出明确的异常
+            logger.error(f"连接到 {db_type} 失败: {e}")
+            
+            # 判断是否需要回退到SQLite
+            # 检查环境变量或配置来确定是否允许回退
+            allow_fallback = os.environ.get('ALLOW_DB_FALLBACK', 'true').lower() == 'true'
+            
+            if allow_fallback and (db_type == 'postgresql' or db_type == 'postgres'):
+                logger.warning("尝试回退到 SQLite 数据库")
+                try:
+                    db = DBManager(db_type='sqlite')
+                    logger.info("已成功回退到 SQLite 数据库")
+                except Exception as e2:
+                    logger.error(f"连接到 SQLite 也失败: {e2}")
+                    raise RuntimeError(f"无法连接到任何数据库: PostgreSQL - {e}, SQLite - {e2}")
+            else:
+                # 不回退或非PostgreSQL连接失败，则直接抛出异常
+                raise RuntimeError(f"数据库连接失败，无法继续: {e}")
+                
     return db 

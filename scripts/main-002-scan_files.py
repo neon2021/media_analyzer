@@ -6,10 +6,26 @@ from media_analyzer.utils.config_manager import ConfigManager, get_config
 import argparse
 import logging
 import os
+import sys
 
 if __name__=="__main__":
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="扫描设备中的媒体文件")
+    parser.add_argument('--config', type=str, help='配置文件路径')
+    parser.add_argument('--no-fallback', action='store_true', help='禁用数据库连接失败时回退到SQLite')
+    args = parser.parse_args()
+    
+    # 设置环境变量控制数据库回退行为
+    if args.no_fallback:
+        os.environ['ALLOW_DB_FALLBACK'] = 'false'
+    
     # 获取配置管理器（会自动按优先级从多个位置加载配置）
     config_manager = ConfigManager()
+    
+    # 如果指定了配置文件，加载它
+    if args.config:
+        config_manager.load_config(args.config)
+        
     config = get_config()
     
     # 设置日志
@@ -52,8 +68,9 @@ if __name__=="__main__":
         # 扫描每个设备
         for mount_path, uuid in devices.items():
             logger.info(f"开始扫描设备: {mount_path} (UUID: {uuid})")
-            scan_files_on_device(mount_path, uuid)
+            # 复用同一个数据库连接
+            scan_files_on_device(mount_path, uuid, db=db)
             
     except Exception as e:
         logger.error(f"程序执行出错: {e}", exc_info=True)
-        exit(1)
+        sys.exit(1)

@@ -4,7 +4,8 @@ import time
 import hashlib
 import multiprocessing
 from datetime import datetime
-from media_analyzer.db.db_manager import get_db
+from typing import Optional
+
 from media_analyzer.utils.path_converter import PathConverter
 from media_analyzer.utils.config_manager import get_config
 
@@ -62,9 +63,8 @@ def should_skip_path(path):
             return True
     return False
 
-def save_progress_to_db(device_uuid, total_files, new_files):
+def save_progress_to_db(db, device_uuid, total_files, new_files):
     """每 N 秒保存一次进度到数据库"""
-    db = get_db()
     current_time = datetime.now()
     
     if db.db_type == "sqlite":
@@ -119,19 +119,24 @@ def check_db_config():
     return config.get('database.type', 'sqlite').lower()
 
 # 在文件开始时就确定数据库类型
-def scan_files_on_device(mount_path, device_uuid):
+def scan_files_on_device(mount_path, device_uuid, db=None):
     """
     扫描设备上的所有媒体文件
     
     Args:
         mount_path (str): 设备挂载路径
         device_uuid (str): 设备UUID
+        db (DBManager, optional): 数据库连接，如果为None则自动获取
     """
     logger.info(f"开始扫描设备: {mount_path} (UUID: {device_uuid})")
-    db = get_db()
     
-    # 获取数据库类型
-    db_type = get_config().get('database.type', 'sqlite').lower()
+    # 如果没有提供数据库连接，则获取一个
+    if db is None:
+        from media_analyzer.db.db_manager import get_db
+        db = get_db()
+    
+    # 获取数据库类型，用于后续SQL语法
+    db_type = db.db_type
     logger.info(f"使用数据库类型: {db_type}")
     
     # 标准化挂载路径
@@ -144,7 +149,7 @@ def scan_files_on_device(mount_path, device_uuid):
     system_id = get_config().get('system.id', 'default-system')
     
     # 创建临时表来跟踪已扫描的文件
-    if db.db_type == 'sqlite':
+    if db_type == 'sqlite':
         db.execute('''
         CREATE TEMPORARY TABLE IF NOT EXISTS scanned_files (
             path TEXT PRIMARY KEY
@@ -195,14 +200,14 @@ def scan_files_on_device(mount_path, device_uuid):
                 file_hash = calculate_file_hash(file_path)
                 
                 # 首先检查文件是否已存在
-                if db.db_type == 'sqlite':
+                if db_type == 'sqlite':
                     result = db.query_one(
-                        "SELECT 1 FROM files WHERE device_uuid = ? AND path = ?", 
+                        "SELECT id FROM files WHERE device_uuid = ? AND path = ?", 
                         (device_uuid, rel_path)
                     )
                 else:  # PostgreSQL
                     result = db.query_one(
-                        "SELECT 1 FROM files WHERE device_uuid = %s AND path = %s", 
+                        "SELECT id FROM files WHERE device_uuid = %s AND path = %s", 
                         (device_uuid, rel_path)
                     )
                 
@@ -210,7 +215,7 @@ def scan_files_on_device(mount_path, device_uuid):
                 
                 if exists:
                     # 更新现有记录
-                    if db.db_type == 'sqlite':
+                    if db_type == 'sqlite':
                         db.execute('''
                         UPDATE files SET 
                             hash = ?,
@@ -232,7 +237,7 @@ def scan_files_on_device(mount_path, device_uuid):
                         ''', (file_hash, file_size, modified_time, datetime.now(), system_id, device_uuid, rel_path))
                 else:
                     # 插入新记录
-                    if db.db_type == 'sqlite':
+                    if db_type == 'sqlite':
                         db.execute('''
                         INSERT INTO files 
                         (device_uuid, path, hash, size, modified_time, scanned_time, system_id)
@@ -248,7 +253,7 @@ def scan_files_on_device(mount_path, device_uuid):
                     new_files_count += 1
                 
                 # 更新已扫描文件表
-                if db.db_type == 'sqlite':
+                if db_type == 'sqlite':
                     db.execute('INSERT OR REPLACE INTO scanned_files (path) VALUES (?)', (rel_path,))
                 else:  # PostgreSQL
                     db.execute('''
@@ -267,7 +272,7 @@ def scan_files_on_device(mount_path, device_uuid):
                     logger.info(f"已扫描 {scanned_count} 个文件，发现 {new_files_count} 个新文件，耗时: {elapsed:.2f}秒，速率: {rate:.2f}文件/秒")
                     
                     # 检查进度记录是否存在
-                    if db.db_type == 'sqlite':
+                    if db_type == 'sqlite':
                         result = db.query_one(
                             "SELECT 1 FROM scan_progress WHERE device_uuid = ?", 
                             (device_uuid,)
@@ -282,7 +287,7 @@ def scan_files_on_device(mount_path, device_uuid):
                     
                     if progress_exists:
                         # 更新现有进度
-                        if db.db_type == 'sqlite':
+                        if db_type == 'sqlite':
                             db.execute('''
                             UPDATE scan_progress SET 
                                 total_files = ?,
@@ -300,7 +305,7 @@ def scan_files_on_device(mount_path, device_uuid):
                             ''', (scanned_count, new_files_count, datetime.now(), device_uuid))
                     else:
                         # 插入新进度
-                        if db.db_type == 'sqlite':
+                        if db_type == 'sqlite':
                             db.execute('''
                             INSERT INTO scan_progress 
                             (device_uuid, total_files, new_files, last_updated)
@@ -320,7 +325,7 @@ def scan_files_on_device(mount_path, device_uuid):
                 logger.error(f"处理文件时出错: {file_path}, 错误: {e}")
     
     # 删除不再存在的文件记录
-    if db.db_type == 'sqlite':
+    if db_type == 'sqlite':
         db.execute('''
         DELETE FROM files 
         WHERE device_uuid = ? AND path NOT IN (SELECT path FROM scanned_files)
@@ -335,7 +340,7 @@ def scan_files_on_device(mount_path, device_uuid):
     elapsed = time.time() - start_time
     logger.info(f"扫描完成。处理了 {scanned_count} 个文件，新增 {new_files_count} 个文件，耗时: {elapsed:.2f}秒")
     
-    if db.db_type == 'sqlite':
+    if db_type == 'sqlite':
         db.execute('''
         UPDATE scan_progress SET 
             total_files = ?,
