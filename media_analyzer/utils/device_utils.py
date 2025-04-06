@@ -29,22 +29,36 @@ def get_current_system_info() -> Dict[str, str]:
 
 def list_all_device_ids() -> Dict[str, str]:
     """
-    列出系统中所有设备的ID
+    列出系统中所有设备的ID，包括系统分区和外接设备
     
     Returns:
         字典，键为挂载路径，值为设备UUID
     """
     system = platform.system()
+    devices = {}
     
+    # 首先获取外接设备
     if system == 'Darwin':  # macOS
-        return _list_macos_devices()
+        devices = _list_macos_devices()
     elif system == 'Linux':
-        return _list_linux_devices()
+        devices = _list_linux_devices()
     elif system == 'Windows':
-        return _list_windows_devices()
+        devices = _list_windows_devices()
     else:
         logger.warning(f"不支持的操作系统: {system}")
-        return {}
+    
+    # 添加本地主目录
+    home_dir = os.path.expanduser("~")
+    if os.path.exists(home_dir) and home_dir not in devices:
+        # 为主目录生成一个固定的UUID (根据主机名和用户目录)
+        system_name = platform.node().replace('.', '-')
+        user_name = os.path.basename(home_dir)
+        home_uuid = f"HOME-{system_name}-{user_name}"
+        
+        devices[home_dir] = home_uuid
+        logger.info(f"已添加主目录到设备列表: {home_dir} (UUID: {home_uuid})")
+    
+    return devices
 
 
 def _list_macos_devices() -> Dict[str, str]:
@@ -106,12 +120,15 @@ def _list_macos_devices() -> Dict[str, str]:
         if current_volume and 'UUID' in current_data and 'Mount Point' in current_data:
             devices[current_data['Mount Point']] = current_data['UUID']
             
-        # 过滤掉系统挂载点
+        # 过滤掉系统挂载点，但保留用户根目录所在卷
         filtered_devices = {}
         for path, uuid in devices.items():
-            if (path.startswith('/Volumes/') and 
+            # 保留/Volumes下的卷，过滤掉Recovery和VM
+            if ((path.startswith('/Volumes/') and 
                 not path.startswith('/Volumes/Recovery') and 
-                not path.startswith('/Volumes/VM')):
+                not path.startswith('/Volumes/VM')) or
+                # 保留根目录所在卷
+                path == '/'):
                 filtered_devices[path] = uuid
             
         return filtered_devices

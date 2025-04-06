@@ -77,6 +77,16 @@ scan:
 
 ## 使用方法
 
+### 启用db回退和不回退
+
+```bash
+ALLOW_DB_FALLBACK=true PYTHONPATH=.../media_analyzer:$PYTHONPATH python main-002-scan_files.py | cat
+```
+
+```bash
+ALLOW_DB_FALLBACK=false PYTHONPATH=.../media_analyzer:$PYTHONPATH python main-002-scan_files.py | cat
+```
+
 ### 列出设备
 
 ```bash

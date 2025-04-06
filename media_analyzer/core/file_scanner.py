@@ -58,6 +58,51 @@ SKIP_DIRS = [
 ]
 
 def should_skip_path(path):
+    """
+    检查是否应该跳过此路径
+    
+    Args:
+        path: 文件路径
+        
+    Returns:
+        如果应该跳过则返回True，否则返回False
+    """
+    # 获取配置
+    config = get_config()
+    
+    # 用户主目录路径
+    home_dir = os.path.expanduser("~")
+    
+    # 如果是主目录下的路径，特殊处理
+    if path.startswith(home_dir):
+        # 如果配置为不扫描主目录，则跳过
+        if not config.get('scan.include_home', True):
+            return True
+            
+        # 获取主目录下要扫描的指定目录列表
+        home_scan_dirs = config.get('scan.home_scan_dirs', [])
+        
+        # 如果指定了特定目录且非空，检查当前路径是否在这些目录中
+        if home_scan_dirs:
+            # 计算相对于主目录的路径
+            rel_to_home = os.path.relpath(path, home_dir)
+            top_dir = rel_to_home.split(os.sep)[0]
+            
+            # 如果顶层目录不在指定的扫描目录中，则跳过
+            if top_dir not in home_scan_dirs:
+                return True
+        
+        # 检查排除目录
+        exclude_dirs = config.get('scan.exclude_dirs', [])
+        for exclude in exclude_dirs:
+            exclude_path = os.path.join(home_dir, exclude) if not exclude.startswith('/') else exclude
+            if path.startswith(exclude_path) or exclude in path.split(os.sep):
+                return True
+        
+        # 通过所有检查，不跳过
+        return False
+    
+    # 其他路径依然按系统目录规则跳过
     for skip in SKIP_DIRS:
         if path.startswith(skip):
             return True
@@ -143,10 +188,12 @@ def scan_files_on_device(mount_path, device_uuid, db=None):
     mount_path = PathConverter.normalize_path(mount_path)
     
     # 获取媒体文件扩展名列表
-    media_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.mkv']
+    config = get_config()
+    media_extensions = config.get('scan.include_extensions', 
+                                 ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.mkv'])
     
     # 获取系统ID
-    system_id = get_config().get('system.id', 'default-system')
+    system_id = config.get('system.id', 'default-system')
     
     # 创建临时表来跟踪已扫描的文件
     if db_type == 'sqlite':
@@ -173,8 +220,10 @@ def scan_files_on_device(mount_path, device_uuid, db=None):
     
     # 遍历目录
     for root, dirs, files in os.walk(mount_path):
-        # 排除系统目录
-        if any(hidden in root for hidden in ['/System', '/Volumes/Recovery', '/private', '/Library', '.Trashes']):
+        # 检查是否应该跳过此目录
+        if should_skip_path(root):
+            logger.debug(f"跳过目录: {root}")
+            dirs[:] = []  # 清空子目录列表，不再遍历
             continue
             
         for file in files:

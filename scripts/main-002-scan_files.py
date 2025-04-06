@@ -13,6 +13,9 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description="扫描设备中的媒体文件")
     parser.add_argument('--config', type=str, help='配置文件路径')
     parser.add_argument('--no-fallback', action='store_true', help='禁用数据库连接失败时回退到SQLite')
+    parser.add_argument('--scan-home', action='store_true', help='扫描用户主目录')
+    parser.add_argument('--home-dirs', type=str, nargs='+', help='指定要扫描的主目录下的文件夹，如 Pictures Documents')
+    parser.add_argument('--scan-device', type=str, help='指定设备的UUID或挂载路径进行扫描')
     args = parser.parse_args()
     
     # 设置环境变量控制数据库回退行为
@@ -26,8 +29,16 @@ if __name__=="__main__":
     if args.config:
         config_manager.load_config(args.config)
         
+    # 获取初始配置
     config = get_config()
     
+    # 根据命令行参数覆盖配置
+    if args.scan_home:
+        config['scan']['include_home'] = True
+        
+    if args.home_dirs:
+        config['scan']['home_scan_dirs'] = args.home_dirs
+        
     # 设置日志
     logging.basicConfig(
         level=logging.INFO,
@@ -51,6 +62,21 @@ if __name__=="__main__":
         if not devices:
             logger.warning("未找到任何设备")
             exit(0)
+            
+        # 筛选指定的设备(如果命令行指定了)
+        if args.scan_device:
+            filtered_devices = {}
+            for path, uuid in devices.items():
+                # 匹配UUID或路径
+                if uuid == args.scan_device or path == args.scan_device:
+                    filtered_devices[path] = uuid
+                    break
+            
+            if filtered_devices:
+                devices = filtered_devices
+                logger.info(f"将仅扫描指定设备: {args.scan_device}")
+            else:
+                logger.warning(f"未找到指定的设备: {args.scan_device}")
         
         # 构建设备列表，用于设备注册表更新
         device_list = []

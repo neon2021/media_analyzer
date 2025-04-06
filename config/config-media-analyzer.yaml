@@ -60,6 +60,11 @@ scan:
     - .svn
     - node_modules
     - __pycache__
+    - Library
+    - .local
+    - .cache
+    - .npm
+    - .vscode
   include_extensions:  # 包含的文件扩展名
     - .jpg
     - .jpeg
@@ -71,6 +76,13 @@ scan:
     - .mov
     - .avi
     - .mkv
+  include_home: true   # 是否包含扫描用户主目录
+  home_scan_dirs:      # 在主目录下要扫描的目录列表(空列表表示全部扫描)
+    - Pictures
+    - Downloads
+    - Documents
+    - Videos
+    - Desktop
 
 # 同步配置
 sync:
