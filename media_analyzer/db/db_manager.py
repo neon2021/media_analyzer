@@ -4,7 +4,7 @@ import threading
 from contextlib import contextmanager
 from queue import Queue
 from typing import Optional
-from config_manager import get_config
+from media_analyzer.utils.config_manager import get_config
 
 class DatabaseManager:
     _instance = None

@@ -1,4 +1,4 @@
-from db_manager import get_db
+from media_analyzer.db.db_manager import get_db
 
 def init_db():
     """初始化数据库表结构"""
@@ -17,6 +17,18 @@ def init_db():
             )
         """)
 
+        # 创建设备挂载点映射表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS device_mount_points (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_uuid TEXT NOT NULL,
+                system_id TEXT NOT NULL,
+                mount_path TEXT NOT NULL,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (device_uuid, system_id)
+            )
+        """)
+
         # 创建文件表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS files (
@@ -27,6 +39,7 @@ def init_db():
                 size INTEGER,
                 modified_time TEXT,
                 scanned_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_accessed TIMESTAMP,
                 UNIQUE (device_uuid, path)
             )
         """)
@@ -57,4 +70,24 @@ def init_db():
                 analyzed_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(file_id) REFERENCES files(id)
             )
-        """) 
+        """)
+
+        # 创建系统配置表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS system_config (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # 添加索引以提高性能
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_device_uuid ON files(device_uuid)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)")
+        
+        db.conn.commit()
+
+if __name__ == "__main__":
+    init_db()
+    print("数据库初始化完成") 

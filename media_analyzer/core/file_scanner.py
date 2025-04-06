@@ -1,17 +1,18 @@
 import os
-import hashlib
+import logging
 import time
-import multiprocessing
+import hashlib
 from datetime import datetime
-from db_manager import get_db
+from media_analyzer.db.db_manager import get_db
+from media_analyzer.utils.path_converter import PathConverter
+
+logger = logging.getLogger(__name__)
 
 # ========== 配置项 ==========
 HASH_TIMEOUT = 10             # 单个文件最大哈希耗时（秒）
 PROGRESS_INTERVAL = 30        # 每 N 秒保存一次扫描进度
 # ============================
 
-    
-    
 def hash_worker(path, block_size, queue):
     """计算文件的 SHA256 哈希值"""
     try:
@@ -68,63 +69,161 @@ def save_progress_to_db(device_uuid, total_files, new_files):
             VALUES (?, ?, ?, ?)
         """, (device_uuid, total_files, new_files, now()))
     
-def scan_files_on_device(mount_path, device_uuid, progress_interval=30):
-    """递归扫描指定设备上的文件并写入数据库"""
+def scan_files_on_device(mount_path, device_uuid):
+    """
+    扫描设备上的所有媒体文件
+    
+    Args:
+        mount_path (str): 设备挂载路径
+        device_uuid (str): 设备UUID
+    """
+    logger.info(f"开始扫描设备: {mount_path} (UUID: {device_uuid})")
     db = get_db()
-    total = 0
-    new_files = 0
-    start_time = time.time()
-
-    for root, dirs, files in os.walk(mount_path):
-        # 在目录阶段剪枝
-        # 系统目录跳过
-        if should_skip_path(root):
-            dirs[:] = []  # 清空子目录，阻止继续深入
-            continue      # 跳过该 root 下的所有文件
+    
+    # 标准化挂载路径
+    mount_path = PathConverter.normalize_path(mount_path)
+    
+    # 获取媒体文件扩展名列表
+    media_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.mkv']
+    
+    # 创建临时表来跟踪已扫描的文件
+    with db.get_cursor() as cursor:
+        cursor.execute('''
+        CREATE TEMPORARY TABLE IF NOT EXISTS scanned_files (
+            path TEXT PRIMARY KEY
+        )
+        ''')
         
-        for name in files:
-            file_path = os.path.join(root, name)
-            
-            # ✅ 每个文件实时检查数据库中是否已存在
-            with db.get_cursor(commit=False) as cursor:
-                cursor.execute("""
-                    SELECT 1 FROM files WHERE device_uuid = ? AND path = ? LIMIT 1
-                """, (device_uuid, file_path))
-                if cursor.fetchone():
-                    continue  # 文件已存在，跳过
-            
-            try:
-                stat = os.stat(file_path)
-                size = stat.st_size
-                mtime = datetime.fromtimestamp(stat.st_mtime).isoformat()
-                file_hash = compute_file_hash(file_path)
-                total += 1
+        # 开始计时
+        start_time = time.time()
+        scanned_count = 0
+        new_files_count = 0
+        
+        # 定期更新进度
+        last_progress_update = start_time
+        progress_interval = 30  # 每30秒更新一次进度
+        
+        # 遍历目录
+        for root, dirs, files in os.walk(mount_path):
+            # 排除系统目录
+            if any(hidden in root for hidden in ['/System', '/Volumes/Recovery', '/private', '/Library', '.Trashes']):
+                continue
+                
+            for file in files:
+                # 检查文件扩展名
+                ext = os.path.splitext(file)[1].lower()
+                if ext not in media_extensions:
+                    continue
+                
+                # 构建文件路径
+                file_path = os.path.join(root, file)
+                
+                # 转换为相对路径存储
+                rel_path = PathConverter.get_relative_path(file_path, mount_path)
+                logger.debug(f"原始路径: {file_path}, 挂载点: {mount_path}, 相对路径: {rel_path}")
+                
+                # 获取文件信息
+                try:
+                    file_stat = os.stat(file_path)
+                    file_size = file_stat.st_size
+                    modified_time = datetime.fromtimestamp(file_stat.st_mtime)
+                    
+                    # 计算文件哈希
+                    file_hash = calculate_file_hash(file_path)
+                    
+                    # 记录到数据库
+                    cursor.execute('''
+                    INSERT INTO files (device_uuid, path, hash, size, modified_time, scanned_time)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(device_uuid, path) DO UPDATE SET
+                        hash=excluded.hash,
+                        size=excluded.size,
+                        modified_time=excluded.modified_time,
+                        scanned_time=excluded.scanned_time
+                    ''', (device_uuid, rel_path, file_hash, file_size, modified_time, datetime.now()))
+                    
+                    # 检查是否是新文件
+                    if cursor.rowcount > 0:
+                        new_files_count += 1
+                    
+                    # 更新已扫描文件表
+                    cursor.execute('INSERT OR REPLACE INTO scanned_files (path) VALUES (?)', (rel_path,))
+                    
+                    # 更新计数
+                    scanned_count += 1
+                    
+                    # 定期更新进度
+                    now = time.time()
+                    if now - last_progress_update > progress_interval:
+                        elapsed = now - start_time
+                        rate = scanned_count / elapsed if elapsed > 0 else 0
+                        logger.info(f"已扫描 {scanned_count} 个文件，发现 {new_files_count} 个新文件，耗时: {elapsed:.2f}秒，速率: {rate:.2f}文件/秒")
+                        
+                        # 更新进度记录
+                        cursor.execute('''
+                        INSERT INTO scan_progress (device_uuid, total_files, new_files, last_updated)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(device_uuid) DO UPDATE SET
+                            total_files=excluded.total_files,
+                            new_files=excluded.new_files,
+                            last_updated=excluded.last_updated
+                        ''', (device_uuid, scanned_count, new_files_count, datetime.now()))
+                        db.conn.commit()
+                        
+                        last_progress_update = now
+                
+                except Exception as e:
+                    logger.error(f"处理文件时出错: {file_path}, 错误: {e}")
+        
+        # 删除不再存在的文件记录
+        cursor.execute('''
+        DELETE FROM files 
+        WHERE device_uuid = ? AND path NOT IN (SELECT path FROM scanned_files)
+        ''', (device_uuid,))
+        
+        # 更新最终进度
+        elapsed = time.time() - start_time
+        rate = scanned_count / elapsed if elapsed > 0 else 0
+        logger.info(f"扫描完成。共扫描 {scanned_count} 个文件，发现 {new_files_count} 个新文件，耗时: {elapsed:.2f}秒，速率: {rate:.2f}文件/秒")
+        
+        # 更新最终进度记录
+        cursor.execute('''
+        INSERT INTO scan_progress (device_uuid, total_files, new_files, last_updated)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(device_uuid) DO UPDATE SET
+            total_files=excluded.total_files,
+            new_files=excluded.new_files,
+            last_updated=excluded.last_updated
+        ''', (device_uuid, scanned_count, new_files_count, datetime.now()))
+        
+        # 清理临时表
+        cursor.execute('DROP TABLE IF EXISTS scanned_files')
+        db.conn.commit()
 
-                if file_hash:
-                    with db.get_cursor() as cursor:
-                        cursor.execute("""
-                            INSERT OR IGNORE INTO files (
-                                device_uuid, path, hash, size, modified_time
-                            ) VALUES (?, ?, ?, ?, ?)
-                        """, (device_uuid, file_path, file_hash, size, mtime))
-
-                        if cursor.rowcount > 0:
-                            new_files += 1
-
-            except Exception as e:
-                print(f"[{now()}] [跳过] 无法处理文件: {file_path}, 错误: {e}")
-
-            # 每 N 秒保存进度到数据库
-            if time.time() - start_time >= progress_interval:
-                save_progress_to_db(device_uuid, total, new_files)
-                print(f"[{now()}] 保存进度: 已扫描 {total} 文件, 新增 {new_files} 文件, 耗时: {time.time() - start_time:.1f} 秒")
-                start_time = time.time()  # 重置计时器
-
-            if total % 1000 == 0:
-                elapsed = time.time() - start_time
-                print(f"[{now()}] [进度] 已处理: {total} 文件，新增: {new_files}，耗时: {elapsed:.1f} 秒")
-
-    # 最后保存一次进度
-    save_progress_to_db(device_uuid, total, new_files)
-    elapsed = time.time() - start_time
-    print(f"[{now()}] [完成] 总计扫描: {total} 文件，新增: {new_files}，总耗时: {elapsed:.1f} 秒")
+def calculate_file_hash(file_path, block_size=8192, max_size=10*1024*1024):
+    """
+    计算文件的哈希值 (仅计算前10MB内容)
+    
+    Args:
+        file_path (str): 文件路径
+        block_size (int): 每次读取的块大小
+        max_size (int): 最大处理的文件大小
+        
+    Returns:
+        str: 文件SHA256哈希值的16进制表示
+    """
+    sha256 = hashlib.sha256()
+    size = 0
+    
+    try:
+        with open(file_path, 'rb') as f:
+            while size < max_size:
+                data = f.read(block_size)
+                if not data:
+                    break
+                size += len(data)
+                sha256.update(data)
+        return sha256.hexdigest()
+    except Exception as e:
+        logger.error(f"计算文件哈希时出错: {file_path}, 错误: {e}")
+        return None
