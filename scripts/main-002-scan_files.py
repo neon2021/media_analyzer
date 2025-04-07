@@ -22,20 +22,17 @@ if __name__=="__main__":
     if args.no_fallback:
         os.environ['ALLOW_DB_FALLBACK'] = 'false'
     
-    # 设置日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
-    
     # 获取配置管理器（会自动按优先级从多个位置加载配置）
     config_manager = ConfigManager()
     
     # 如果指定了配置文件，加载它
     if args.config:
         config_manager.load_config(args.config)
-        
+    
+    # 设置日志
+    config_manager.setup_logging()
+    logger = logging.getLogger(__name__)
+    
     # 获取初始配置
     config = get_config()
     

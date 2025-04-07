@@ -19,18 +19,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 from media_analyzer.utils.path_converter import get_relative_path
 from media_analyzer.utils.device_utils import get_device_by_path, get_mount_point
 from media_analyzer.core.update_device_registry import update_device_registry
-from media_analyzer.utils.config_manager import get_scan_config, get_system_id
+from media_analyzer.utils.config_manager import get_scan_config, get_system_id, ConfigManager
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('scan.log')
-    ]
-)
-
+# 获取配置管理器并设置日志
+config_manager = ConfigManager()
+config_manager.setup_logging()
 logger = logging.getLogger(__name__)
 
 # 全局变量

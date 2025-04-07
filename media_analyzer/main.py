@@ -16,17 +16,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from media_analyzer.utils.device_utils import list_all_device_ids
 from media_analyzer.core.update_device_registry import update_device_registry, mark_inactive_devices
-from media_analyzer.utils.config_manager import get_config, get_system_id
+from media_analyzer.utils.config_manager import get_config, get_system_id, ConfigManager
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('media_analyzer.log')
-    ]
-)
+# 获取配置管理器
+config_manager = ConfigManager()
+config_manager.setup_logging()
 
 logger = logging.getLogger(__name__)
 

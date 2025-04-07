@@ -7,12 +7,11 @@ from datetime import datetime
 from contextlib import redirect_stdout
 from media_analyzer.core.update_device_registry import update_device_registry, get_device_mount_point
 from media_analyzer.db.db_manager import get_db
+from media_analyzer.utils.config_manager import ConfigManager
 
-# 配置日志
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# 获取配置管理器并设置日志
+config_manager = ConfigManager()
+config_manager.setup_logging()
 
 class TestDeviceRegistry(unittest.TestCase):
     """设备注册表更新功能测试类"""

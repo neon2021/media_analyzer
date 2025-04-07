@@ -16,16 +16,13 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from media_analyzer.utils.config_manager import get_config
+from media_analyzer.utils.config_manager import get_config, ConfigManager
 from media_analyzer.utils.path_converter import PathConverter
 from media_analyzer.core.file_scanner import calculate_file_hash
 
-# 配置日志
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
+# 获取配置管理器并设置日志
+config_manager = ConfigManager()
+config_manager.setup_logging()
 logger = logging.getLogger(__name__)
 
 # 在测试开始前解析参数并加载测试配置

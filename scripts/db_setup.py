@@ -15,12 +15,11 @@ import argparse
 import logging
 import yaml
 from pathlib import Path
+from media_analyzer.utils.config_manager import ConfigManager
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# 获取配置管理器并设置日志
+config_manager = ConfigManager()
+config_manager.setup_logging()
 logger = logging.getLogger(__name__)
 
 # 项目根目录

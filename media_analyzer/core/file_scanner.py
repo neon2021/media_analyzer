@@ -70,37 +70,37 @@ def should_skip_path(path):
     # 获取配置
     config = get_config()
     
-    # 用户主目录路径
-    home_dir = os.path.expanduser("~")
+    # # 用户主目录路径
+    # home_dir = os.path.expanduser("~")
     
-    # 如果是主目录下的路径，特殊处理
-    if path.startswith(home_dir):
-        # 如果配置为不扫描主目录，则跳过
-        if not config.get('scan.include_home', True):
-            return True
+    # # 如果是主目录下的路径，特殊处理
+    # if path.startswith(home_dir):
+    #     # 如果配置为不扫描主目录，则跳过
+    #     if not config.get('scan.include_home', True):
+    #         return True
             
-        # 获取主目录下要扫描的指定目录列表
-        home_scan_dirs = config.get('scan.home_scan_dirs', [])
+    #     # 获取主目录下要扫描的指定目录列表
+    #     home_scan_dirs = config.get('scan.home_scan_dirs', [])
         
-        # 如果指定了特定目录且非空，检查当前路径是否在这些目录中
-        if home_scan_dirs:
-            # 计算相对于主目录的路径
-            rel_to_home = os.path.relpath(path, home_dir)
-            top_dir = rel_to_home.split(os.sep)[0]
+    #     # 如果指定了特定目录且非空，检查当前路径是否在这些目录中
+    #     if home_scan_dirs:
+    #         # 计算相对于主目录的路径
+    #         rel_to_home = os.path.relpath(path, home_dir)
+    #         top_dir = rel_to_home.split(os.sep)[0]
             
-            # 如果顶层目录不在指定的扫描目录中，则跳过
-            if top_dir not in home_scan_dirs:
-                return True
+    #         # 如果顶层目录不在指定的扫描目录中，则跳过
+    #         if top_dir not in home_scan_dirs:
+    #             return True
         
-        # 检查排除目录
-        exclude_dirs = config.get('scan.exclude_dirs', [])
-        for exclude in exclude_dirs:
-            exclude_path = os.path.join(home_dir, exclude) if not exclude.startswith('/') else exclude
-            if path.startswith(exclude_path) or exclude in path.split(os.sep):
-                return True
+    #     # 检查排除目录
+    #     exclude_dirs = config.get('scan.exclude_dirs', [])
+    #     for exclude in exclude_dirs:
+    #         exclude_path = os.path.join(home_dir, exclude) if not exclude.startswith('/') else exclude
+    #         if path.startswith(exclude_path) or exclude in path.split(os.sep):
+    #             return True
         
-        # 通过所有检查，不跳过
-        return False
+    #     # 通过所有检查，不跳过
+    #     return False
     
     # 其他路径依然按系统目录规则跳过
     for skip in SKIP_DIRS:

@@ -3,17 +3,15 @@ import sqlite3
 import psycopg2
 from psycopg2.extras import execute_values
 import logging
-from media_analyzer.utils.config_manager import get_config
+from media_analyzer.utils.config_manager import get_config, ConfigManager
 import time
 from datetime import datetime
 import platform
 import socket
 
-# 设置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s'
-)
+# 获取配置管理器并设置日志
+config_manager = ConfigManager()
+config_manager.setup_logging()
 logger = logging.getLogger(__name__)
 
 def get_sqlite_connection():
