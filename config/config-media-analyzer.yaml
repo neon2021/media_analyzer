@@ -76,6 +76,7 @@ scan:
     - .mov
     - .avi
     - .mkv
+  is_include_all: true # 是否扫描所有文件扩展名
   include_home: true   # 是否包含扫描用户主目录
   home_scan_dirs:      # 在主目录下要扫描的目录列表(空列表表示全部扫描)
     - Pictures

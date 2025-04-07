@@ -129,9 +129,21 @@ def should_scan_file(file_path: str) -> bool:
     Returns:
         是否应该扫描
     """
+    # 从配置中获取要包含的扩展名
+    config = get_scan_config()
+    include_extensions = config.get('include_extensions', [])
+    is_include_all = config.get('scan.is_include_all', False)
+    
+    # 如果没有指定扩展名或扩展名列表为空，则扫描所有文件
+    if not include_extensions or is_include_all:
+        # 跳过隐藏文件
+        if os.path.basename(file_path).startswith('.'):
+            return False
+        return True
+    
     # 检查扩展名
     _, ext = os.path.splitext(file_path.lower())
-    if ext not in MEDIA_EXTENSIONS:
+    if ext not in include_extensions:
         return False
     
     # 跳过隐藏文件

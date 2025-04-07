@@ -211,6 +211,8 @@ def scan_files_on_device(mount_path, device_uuid, db=None):
     config = get_config()
     media_extensions = config.get('scan.include_extensions', 
                                  ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.mp4', '.mov', '.avi', '.mkv'])
+    is_include_all = config.get('scan.is_include_all', False)
+    
     
     # 获取系统ID
     system_id = config.get('system', {}).get('id', os.uname().nodename)
@@ -245,7 +247,7 @@ def scan_files_on_device(mount_path, device_uuid, db=None):
         for file in files:
             # 检查文件扩展名
             ext = os.path.splitext(file)[1].lower()
-            if ext not in media_extensions:
+            if ext not in media_extensions and not is_include_all:
                 continue
             
             # 构建文件路径
