@@ -22,6 +22,13 @@ if __name__=="__main__":
     if args.no_fallback:
         os.environ['ALLOW_DB_FALLBACK'] = 'false'
     
+    # 设置日志
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+    
     # 获取配置管理器（会自动按优先级从多个位置加载配置）
     config_manager = ConfigManager()
     
@@ -34,18 +41,15 @@ if __name__=="__main__":
     
     # 根据命令行参数覆盖配置
     if args.scan_home:
+        if 'scan' not in config:
+            config['scan'] = {}
         config['scan']['include_home'] = True
         
     if args.home_dirs:
+        if 'scan' not in config:
+            config['scan'] = {}
         config['scan']['home_scan_dirs'] = args.home_dirs
         
-    # 设置日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
-    
     try:
         # 确保配置已加载后再初始化数据库
         from media_analyzer.db.db_manager import get_db
@@ -61,7 +65,7 @@ if __name__=="__main__":
         
         if not devices:
             logger.warning("未找到任何设备")
-            exit(0)
+            sys.exit(0)
             
         # 筛选指定的设备(如果命令行指定了)
         if args.scan_device:
@@ -77,6 +81,10 @@ if __name__=="__main__":
                 logger.info(f"将仅扫描指定设备: {args.scan_device}")
             else:
                 logger.warning(f"未找到指定的设备: {args.scan_device}")
+                sys.exit(1)
+        
+        # 获取系统ID
+        system_id = config.get('system', {}).get('id', os.uname().nodename)
         
         # 构建设备列表，用于设备注册表更新
         device_list = []
@@ -84,12 +92,13 @@ if __name__=="__main__":
             device_list.append({
                 'uuid': uuid,
                 'mount_path': mount_path,
-                'label': os.path.basename(mount_path) or 'Root'
+                'label': os.path.basename(mount_path) or 'Root',
+                'system_id': system_id
             })
             
         # 更新设备注册表
         logger.info("更新设备注册表...")
-        update_device_registry(device_list)
+        update_device_registry(device_list, system_id)
 
         # 扫描每个设备
         for mount_path, uuid in devices.items():

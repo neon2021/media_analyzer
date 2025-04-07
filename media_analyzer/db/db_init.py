@@ -47,16 +47,24 @@ def init_db():
             UNIQUE(device_uuid, path, system_id)
         )
     """)
+    
+    # 创建已扫描文件临时表（用于优化文件比对）
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS scanned_files (
+            path TEXT PRIMARY KEY
+        )
+    """)
 
-    # 创建扫描进度表
+    # 创建扫描进度表 - 修复外键引用问题
     db.execute("""
         CREATE TABLE IF NOT EXISTS scan_progress (
             id SERIAL PRIMARY KEY,
             device_uuid VARCHAR(36) NOT NULL,
+            system_id VARCHAR(50) NOT NULL,
             total_files INTEGER,
             new_files INTEGER,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(device_uuid) REFERENCES devices(uuid)
+            UNIQUE(device_uuid, system_id)
         )
     """)
 
@@ -89,6 +97,8 @@ def init_db():
     db.execute("CREATE INDEX IF NOT EXISTS idx_files_device_uuid ON files(device_uuid)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_files_hash ON files(hash)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_devices_uuid ON devices(uuid)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_devices_system_id ON devices(system_id)")
     
     # 提交事务
     db.commit()
