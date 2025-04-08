@@ -5,6 +5,7 @@
 1. 加载配置文件 (config-media-analyzer.yaml)
 2. 提供配置项访问接口
 3. 确保配置一致性和默认值
+4. 统一管理日志系统
 """
 
 import os
@@ -21,7 +22,8 @@ from logging.handlers import RotatingFileHandler
 # 配置文件的默认路径
 DEFAULT_CONFIG_FILENAME = "config-media-analyzer.yaml"
 
-logger = logging.getLogger(__name__)
+# 创建根日志记录器
+logger = logging.getLogger('media_analyzer')
 
 class ConfigManager:
     _instance = None
@@ -52,8 +54,10 @@ class ConfigManager:
                 'logging': {
                     'path': 'logs',
                     'level': 'INFO',
-                    'max_size': 10485760,
-                    'backup_count': 5
+                    'max_size': 10485760,  # 10MB
+                    'backup_count': 5,
+                    'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+                    'date_format': '%Y-%m-%d %H:%M:%S'
                 },
                 'scan': {
                     'hash_timeout': 10,
@@ -74,6 +78,8 @@ class ConfigManager:
             self._process_system_id()
             # 加载配置文件（按优先级从低到高）
             self._load_config_files()
+            # 设置日志系统
+            self.setup_logging()
     
     def _detect_environment(self):
         """检测运行环境"""
@@ -118,7 +124,12 @@ class ConfigManager:
         if os.path.exists(current_dir_config):
             config_paths.append(current_dir_config)
         
-        # 2. 检查用户根目录的配置文件 (考虑多个可能位置)
+        # 2. 检查项目配置目录
+        project_config = "./config/config-media-analyzer.yaml"
+        if os.path.exists(project_config):
+            config_paths.append(project_config)
+        
+        # 3. 检查用户根目录的配置文件 (考虑多个可能位置)
         user_home_configs = [
             os.path.join(str(Path.home()), DEFAULT_CONFIG_FILENAME),
             os.path.join(str(Path.home().joinpath('Documents')), DEFAULT_CONFIG_FILENAME),
@@ -129,11 +140,6 @@ class ConfigManager:
             if os.path.exists(user_config):
                 logger.info(f'找到用户配置: {user_config}')
                 config_paths.append(user_config)
-        
-        # 3. 检查项目配置目录
-        project_config = "./config/config-media-analyzer.yaml"
-        if os.path.exists(project_config):
-            config_paths.append(project_config)
         
         # 4. 检查命令行参数中的配置文件路径
         parser = argparse.ArgumentParser(add_help=False)
@@ -198,27 +204,43 @@ class ConfigManager:
     
     def setup_logging(self) -> None:
         """设置日志系统"""
-        log_path = os.path.expanduser(self.get('logging.path'))
-        log_level = self.get('logging.level', 'INFO')
-        max_size = self.get('logging.max_size', 10485760)
-        backup_count = self.get('logging.backup_count', 5)
+        # 获取日志配置
+        log_config = self.get('logging', {})
+        log_path = os.path.expanduser(log_config.get('path', 'logs'))
+        log_level = log_config.get('level', 'INFO')
+        max_size = log_config.get('max_size', 10485760)
+        backup_count = log_config.get('backup_count', 5)
+        log_format = log_config.get('format', '%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+        date_format = log_config.get('date_format', '%Y-%m-%d %H:%M:%S')
         
         # 确保日志目录存在
         os.makedirs(log_path, exist_ok=True)
         
-        # 配置日志
-        logging.basicConfig(
-            level=getattr(logging, log_level),
-            format='%(asctime)s [%(levelname)s] %(message)s',
-            handlers=[
-                RotatingFileHandler(
-                    os.path.join(log_path, 'media_analyzer.log'),
-                    maxBytes=max_size,
-                    backupCount=backup_count
-                ),
-                logging.StreamHandler()
-            ]
+        # 配置根日志记录器
+        logger.setLevel(getattr(logging, log_level))
+        
+        # 清除现有的处理器
+        logger.handlers.clear()
+        
+        # 添加文件处理器
+        file_handler = RotatingFileHandler(
+            os.path.join(log_path, 'media_analyzer.log'),
+            maxBytes=max_size,
+            backupCount=backup_count
         )
+        file_handler.setFormatter(logging.Formatter(log_format, date_format))
+        logger.addHandler(file_handler)
+        
+        # 添加控制台处理器
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter(log_format, date_format))
+        logger.addHandler(console_handler)
+        
+        # 设置其他模块的日志级别
+        logging.getLogger('PIL').setLevel(logging.WARNING)
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
+        
+        logger.info("日志系统初始化完成")
     
     def __str__(self) -> str:
         """返回格式化的配置字符串"""

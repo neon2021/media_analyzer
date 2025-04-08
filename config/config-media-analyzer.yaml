@@ -97,3 +97,4 @@ system:
   id: auto
   temp_dir: /tmp/media_analyzer
   max_workers: 4 
+  yolo_path: ./yolov5/

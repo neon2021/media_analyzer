@@ -1,14 +1,26 @@
 import os
 import sqlite3
 from PIL import Image
-import face_recognition
+import mediapipe as mp
 import exifread
 from datetime import datetime
 import logging
 from typing import Dict, Any, List, Optional
-from media_analyzer.db.db_manager import DatabaseManager
+from media_analyzer.db.db_manager import DBManager
+from media_analyzer.utils.config_manager import ConfigManager, get_config
+from media_analyzer.utils.path_converter import PathConverter
+from media_analyzer.utils.file_type_detector import detect_file_type
 
+config = ConfigManager()
+config.setup_logging()
 logger = logging.getLogger(__name__)
+
+# 初始化 MediaPipe 人脸检测
+mp_face_detection = mp.solutions.face_detection
+face_detection = mp_face_detection.FaceDetection(
+    model_selection=1,  # 1 for full range detection
+    min_detection_confidence=0.5
+)
 
 def extract_exif_info(image_path: str) -> Dict[str, Any]:
     """
@@ -77,9 +89,19 @@ def detect_faces(image_path: str) -> bool:
         是否包含人脸
     """
     try:
-        image = face_recognition.load_image_file(image_path)
-        face_locations = face_recognition.face_locations(image)
-        return len(face_locations) > 0
+        # 读取图片
+        image = Image.open(image_path)
+        # 转换为RGB格式
+        image_rgb = image.convert('RGB')
+        # 转换为numpy数组
+        image_np = np.array(image_rgb)
+        
+        # 使用MediaPipe进行人脸检测
+        results = face_detection.process(image_np)
+        
+        # 检查是否检测到人脸
+        return results.detections is not None and len(results.detections) > 0
+        
     except Exception as e:
         logger.error(f"人脸检测出错: {image_path}, 错误: {e}")
         return False
